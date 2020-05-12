@@ -18,7 +18,6 @@ void wakeup_idle_host_task(void);
 
 #define sys_mmap sys_mmap_pgoff
 #define sys_mmap2 sys_mmap_pgoff
-#define sys_clone sys_ni_syscall
 #define sys_vfork sys_ni_syscall
 #define sys_rt_sigreturn sys_ni_syscall
 

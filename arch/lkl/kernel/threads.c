@@ -74,14 +74,23 @@ static void kill_thread(struct thread_info *ti)
 		lkl_ops->sem_up(ti->sched_sem);
 		lkl_ops->thread_join(ti->tid);
 	} else {
-
+		/*
+		 * If this is a task backing a host thread created by clone, then we
+		 * need to destroy the associated host thread, but not exit LKL.
+		 */
+		if (test_ti_thread_flag(ti, TIF_CLONED_HOST_THREAD)) {
+			clear_ti_thread_flag(ti, TIF_CLONED_HOST_THREAD);
+			ti->dead = true;
+			BUG_ON(!lkl_ops->thread_destroy_host);
+			lkl_ops->thread_destroy_host(ti->tid, task_key);
+			ti->tid = 0;
 		/*
 		 * Check if the host thread was killed due to its deallocation when
 		 * the associated application thread terminated gracefully. If not,
 		 * the thread has terminated due to a SYS_exit or a signal. In this
 		 * case, we need to notify the host to initiate an LKL shutdown.
 		 */
-		if (!test_ti_thread_flag(ti, TIF_NO_TERMINATION)) {
+		} else if (!test_ti_thread_flag(ti, TIF_NO_TERMINATION)) {
 			int exit_code = task->exit_code;
 			int exit_status = exit_code >> 8;
 			int received_signal = exit_code & 255;
@@ -239,8 +248,8 @@ static void thread_bootstrap(void *_tba)
 	do_exit(0);
 }
 
-int copy_thread(unsigned long clone_flags, unsigned long esp,
-		unsigned long unused, struct task_struct *p)
+int copy_thread_tls(unsigned long clone_flags, unsigned long esp,
+		unsigned long unused, struct task_struct *p, unsigned long tls)
 {
 	LKL_TRACE("enter\n");
 
@@ -250,6 +259,31 @@ int copy_thread(unsigned long clone_flags, unsigned long esp,
 	if ((int (*)(void *))esp == host_task_stub) {
 		set_ti_thread_flag(ti, TIF_HOST_THREAD);
 		return 0;
+	}
+
+	/*
+	 * If we are creating a new userspace thread and are in the middle of a
+	 * system call, create a new host thread coupled with this task.  The
+	 * second check is necessary because we also hit this path when lazily
+	 * binding a host thread to a new task on system call entry.
+	 */
+	void *pc = task_thread_info(current)->syscall_ret;
+	if (pc && !(p->flags & PF_KTHREAD)) {
+		/*
+		 * If we have host support for creating new threads with fine-grained
+		 * control over their initial state, use it to create a new host
+		 * thread.
+		 */
+		if (lkl_ops->thread_create_host) {
+			static unsigned long long clone_count = 0;
+			set_ti_thread_flag(ti, TIF_HOST_THREAD);
+			set_ti_thread_flag(ti, TIF_CLONED_HOST_THREAD);
+			ti->tid = lkl_ops->thread_create_host(pc, (void*)esp, (void*)tls, task_key, p);
+			snprintf(p->comm, sizeof(p->comm), "host_clone%llu", __sync_fetch_and_add(&clone_count, 1));
+			current_thread_info()->cloned_child = p;
+			return (ti->tid == 0) ? -ENOMEM : 0;
+		}
+		return -ENODEV;
 	}
 
 	tba = kmalloc(sizeof(*tba), GFP_KERNEL);

@@ -25,4 +25,6 @@ struct task_struct* lkl_get_current_task_struct(void);
 
 int host_task_stub(void *unused);
 
+extern struct lkl_tls_key *task_key;
+
 #endif /*  _ASM_LKL_SCHED_H */

@@ -116,7 +116,7 @@ static void del_host_task(void *arg)
 	lkl_ops->jmp_buf_set(&ti->sched_jb, exit_task);
 }
 
-static struct lkl_tls_key *task_key;
+struct lkl_tls_key *task_key;
 
 /* Use this to record an ongoing LKL shutdown */
 _Atomic(bool) lkl_shutdown = false;
@@ -131,6 +131,7 @@ struct task_struct* lkl_get_current_task_struct(void)
 long lkl_syscall(long no, long *params)
 {
 	struct task_struct *task = host0;
+	struct thread_info *ti;
 	long ret;
 
 	LKL_TRACE(
@@ -172,6 +173,14 @@ long lkl_syscall(long no, long *params)
 		}
 	}
 
+	ti = task_thread_info(task);
+	/*
+	 * Store the return address so that it can be used in clone and similar
+	 * calls.  In conventional arch ports, this would happen for free because
+	 * the system call would capture the register state of the callee.
+	 */
+	ti->syscall_ret = __builtin_return_address(0);
+
 	LKL_TRACE("switching to host task (no=%li task=%s current=%s)\n", no,
 		  task->comm, current->comm);
 
@@ -185,6 +194,10 @@ long lkl_syscall(long no, long *params)
 	LKL_TRACE("returned from run_syscall() (no=%li task=%s current=%s)\n",
 		  no, task->comm, current->comm);
 
+	/*
+	 * Zero the return address so that nothing accidentally sees a stale value.
+	 */
+	ti->syscall_ret = 0;
 	task_work_run();
 
 	/*
@@ -201,6 +214,31 @@ long lkl_syscall(long no, long *params)
 	}
 
 out:
+	/*
+	 * If we have created a new host task, make sure that it isn't on the
+	 * scheduler queue when we return.  LKL expects that the only tasks driven
+	 * by the Linux scheduler are kernel threads.  If releasing the CPU lock
+	 * entirely and there are runnable tasks, `lkl_cpu_put` may run the
+	 * scheduler and not release the lock.  The scheduler hands the CPU lock to
+	 * the next running thread and `lkl_cpu_put` expects this to be the idle
+	 * host task (which then releases the lock).  If host tasks are scheduled,
+	 * they will be left running (and owning the CPU lock) and `lkl_cpu_put`
+	 * will return without anything having released the lock.  LKL will then
+	 * deadlock on the next system call.
+	 */
+	if (ti->cloned_child)
+	{
+		struct task_struct *child = ti->cloned_child;
+		ti->cloned_child = NULL;
+		/*
+		 * We can't change the scheduler state of a task that isn't running, so
+		 * switch to the task and then mark it as uninteruptible.
+		 */
+		switch_to_host_task(child);
+		child->state = TASK_UNINTERRUPTIBLE;
+		/* Switch back to the calling task before we return. */
+		switch_to_host_task(task);
+	}
 	lkl_cpu_put();
 
 	LKL_TRACE("done (no=%li task=%s current=%s ret=%i)\n", no,

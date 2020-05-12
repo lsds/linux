@@ -23,6 +23,12 @@ struct thread_info {
 	lkl_thread_t tid;
 	struct task_struct *prev_sched;
 	unsigned long stackend;
+	/* The return address from the currently executing syscall. Invalid when
+	 * the thread is not executing a syscall. */
+	void *syscall_ret;
+	/* The task for any child that was created during syscall execution.  Only
+	 * valid on return from a clone-family syscall. */
+	struct task_struct *cloned_child;
 };
 
 #define INIT_THREAD_INFO(tsk)				\
@@ -57,6 +63,7 @@ void threads_cleanup(void);
 #define TIF_SCHED_JB			7
 #define TIF_HOST_THREAD			8
 #define TIF_NO_TERMINATION		9 // Do not terminate LKL on exit
+#define TIF_CLONED_HOST_THREAD		10 // This is a host thread created via a clone-family call.
 
 #define __HAVE_THREAD_FUNCTIONS
 
