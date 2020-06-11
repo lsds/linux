@@ -103,6 +103,8 @@ int lkl_cpu_get(void)
 		__cpu_try_get_unlock(ret, 0);
 		lkl_ops->sem_down(cpu.sem);
 		ret = __cpu_try_get_lock(0);
+		if (ret > -2)
+			cpu.sleepers--;
 	}
 
 	__cpu_try_get_unlock(ret, 1);
@@ -140,7 +142,6 @@ void lkl_cpu_put(void)
 	}
 
 	if (cpu.sleepers) {
-		cpu.sleepers--;
 		lkl_ops->sem_up(cpu.sem);
 	}
 
