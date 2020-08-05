@@ -69,53 +69,49 @@ static void kill_thread(struct thread_info *ti)
 		  task->comm, task->state, task->flags, ti, ti->flags,
 		  test_ti_thread_flag(ti, TIF_NO_TERMINATION));
 
-	/* Check if we are killing an applicaton thread */
-	if (!test_ti_thread_flag(ti, TIF_HOST_THREAD)) {
+	/*
+	 * Check if we are killing an applicaton thread.  If we are killing a
+	 * kernel-managed thread (either a kernel thread or a thread created with
+	 * the `clone` system call, wake up the thread so that it resumes in
+	 * `__switch_to` and then wait for it to exit.
+	 */
+	if (!test_ti_thread_flag(ti, TIF_HOST_THREAD) ||
+		test_ti_thread_flag(ti, TIF_CLONED_HOST_THREAD)) {
 		ti->dead = true;
 		lkl_ops->sem_up(ti->sched_sem);
 		lkl_ops->thread_join(ti->tid);
-	} else {
-		/*
-		 * If this is a task backing a host thread created by clone, then we
-		 * need to destroy the associated host thread, but not exit LKL.
-		 */
-		if (test_ti_thread_flag(ti, TIF_CLONED_HOST_THREAD)) {
-			clear_ti_thread_flag(ti, TIF_CLONED_HOST_THREAD);
-			ti->dead = true;
-			BUG_ON(!lkl_ops->thread_destroy_host);
-			lkl_ops->thread_destroy_host(ti->tid, task_key);
-			ti->tid = 0;
+		ti->tid = NULL;
+	} else if (!test_ti_thread_flag(ti, TIF_NO_TERMINATION)){
 		/*
 		 * Check if the host thread was killed due to its deallocation when
 		 * the associated application thread terminated gracefully. If not,
 		 * the thread has terminated due to a SYS_exit or a signal. In this
 		 * case, we need to notify the host to initiate an LKL shutdown.
 		 */
-		} else if (!test_ti_thread_flag(ti, TIF_NO_TERMINATION)) {
-			int exit_code = task->exit_code;
-			int exit_status = exit_code >> 8;
-			int received_signal = exit_code & 255;
-			int exit_signal = task->exit_signal;
+		int exit_code = task->exit_code;
+		int exit_status = exit_code >> 8;
+		int received_signal = exit_code & 255;
+		int exit_signal = task->exit_signal;
 
-			LKL_TRACE(
-				"terminating LKL (exit_state=%i exit_code=%i exit_signal=%i exit_status=%i "
-				"received_signal=%i ti->dead=%i task->pid=%i "
-				"task->tgid=%i ti->TIF_SCHED_JB=%i ti->TIF_SIGPENDING=%i)\n",
-				task->exit_state, exit_code, exit_signal,
-				exit_status, received_signal, ti->dead,
-				task->pid, task->tgid,
-				test_ti_thread_flag(ti, TIF_SCHED_JB),
-				test_ti_thread_flag(ti, TIF_SIGPENDING));
+		LKL_TRACE(
+			"terminating LKL (exit_state=%i exit_code=%i exit_signal=%i exit_status=%i "
+			"received_signal=%i ti->dead=%i task->pid=%i "
+			"task->tgid=%i ti->TIF_SCHED_JB=%i ti->TIF_SIGPENDING=%i)\n",
+			task->exit_state, exit_code, exit_signal,
+			exit_status, received_signal, ti->dead,
+			task->pid, task->tgid,
+			test_ti_thread_flag(ti, TIF_SCHED_JB),
+			test_ti_thread_flag(ti, TIF_SIGPENDING));
 
-			lkl_shutdown = true;
+		lkl_shutdown = true;
 
-			/* Notify the LKL host to shut down */
-			lkl_ops->terminate(exit_status, received_signal);
-		}
+		/* Notify the LKL host to shut down */
+		lkl_ops->terminate(exit_status, received_signal);
 
 		ti->dead = true;
 	}
 	lkl_ops->sem_free(ti->sched_sem);
+	ti->sched_sem = NULL;
 }
 
 void free_thread_stack(struct task_struct *tsk)
@@ -128,6 +124,7 @@ void free_thread_stack(struct task_struct *tsk)
 		test_tsk_thread_flag(tsk, TIF_SIGPENDING), ti, current->comm);
 
 	kill_thread(ti);
+	LKL_TRACE("Deallocating %p\n", ti);
 	kfree(ti);
 }
 
@@ -175,8 +172,20 @@ struct task_struct *__switch_to(struct task_struct *prev,
 		lkl_ops->sem_down(_prev->sched_sem);
 	}
 
-	if (_prev->dead)
+	if (_prev->dead) {
+		LKL_TRACE("Cleaning up %p\n", _prev);
+		/**
+		 * If this is a cloned host thread, we need to remove the link from the
+		 * host thread to the task, otherwise `del_host_task` will be called
+		 * and will try to deallocate this thread again.  Once this is done, we
+		 * exit this thread and resume at the `thread_join` call in
+		 * `kill_thread`.
+		 */
+		if (test_ti_thread_flag(_prev, TIF_CLONED_HOST_THREAD)) {
+			lkl_ops->tls_set(task_key, NULL);
+		}
 		lkl_ops->thread_exit();
+	}
 
 	return abs_prev;
 }
