@@ -107,6 +107,12 @@ struct ucontext;
  * the function that will eventually call longjmp here
  *
  * @jmp_buf_longjmp - perform a jump back to the saved jump buffer
+ *
+ * @cpuinfo_get - Returns the /proc/cpuinfo string. It needs to be provided a
+ * pointer to the destination buffer and its size, and it returns the total
+ * length of the string. As the string may be longer than the provided buffer,
+ * the returned value may be bigger than the buffer size. The string will be
+ * cropped in that case.
  */
 struct lkl_host_operations {
 	const char *virtio_devices;
@@ -159,6 +165,8 @@ struct lkl_host_operations {
 
 	void (*jmp_buf_set)(struct lkl_jmp_buf *jmpb, void (*f)(void));
 	void (*jmp_buf_longjmp)(struct lkl_jmp_buf *jmpb, int val);
+
+	unsigned int (*cpuinfo_get)(char *buffer, unsigned int buffer_len);
 };
 
 /**
