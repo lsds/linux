@@ -6,6 +6,8 @@
 #include <asm/cpu.h>
 #include <asm/sched.h>
 
+extern _Atomic(int) lkl_exit_status;
+extern _Atomic(int) lkl_received_signal;
 extern _Atomic(bool) lkl_shutdown;
 
 static int init_ti(struct thread_info *ti)
@@ -89,8 +91,8 @@ static void kill_thread(struct thread_info *ti)
 		 * case, we need to notify the host to initiate an LKL shutdown.
 		 */
 		int exit_code = task->exit_code;
-		int exit_status = exit_code >> 8;
-		int received_signal = exit_code & 255;
+		lkl_exit_status = exit_code >> 8;
+		lkl_received_signal = exit_code & 255;
 		int exit_signal = task->exit_signal;
 
 		LKL_TRACE(
@@ -98,15 +100,15 @@ static void kill_thread(struct thread_info *ti)
 			"received_signal=%i ti->dead=%i task->pid=%i "
 			"task->tgid=%i ti->TIF_SCHED_JB=%i ti->TIF_SIGPENDING=%i)\n",
 			task->exit_state, exit_code, exit_signal,
-			exit_status, received_signal, ti->dead,
+			lkl_exit_status, lkl_received_signal, ti->dead,
 			task->pid, task->tgid,
 			test_ti_thread_flag(ti, TIF_SCHED_JB),
 			test_ti_thread_flag(ti, TIF_SIGPENDING));
 
+		/**
+		 * Notify the idle host task to initiate the LKL shutdown
+		 */
 		lkl_shutdown = true;
-
-		/* Notify the LKL host to shut down */
-		lkl_ops->terminate(exit_status, received_signal);
 
 		ti->dead = true;
 	}

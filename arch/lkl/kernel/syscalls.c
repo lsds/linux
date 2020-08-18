@@ -118,6 +118,12 @@ static void del_host_task(void *arg)
 
 struct lkl_tls_key *task_key;
 
+/* Record the exit status after shutdown */
+_Atomic(int) lkl_exit_status;
+
+/* Record received signal after shutdown */
+_Atomic(int) lkl_received_signal;
+
 /* Use this to record an ongoing LKL shutdown */
 _Atomic(bool) lkl_shutdown = false;
 
@@ -138,6 +144,23 @@ long lkl_syscall(long no, long *params)
 		"enter (no=%li current=%s host0->TIF host0->TIF_SIGPENDING=%i)\n",
 		no, current->comm, test_tsk_thread_flag(task, TIF_HOST_THREAD),
 		test_tsk_thread_flag(task, TIF_SIGPENDING));
+
+	/**
+	 * If there is an ongoing shutdown, we assume that the caller (the idle
+	 * host task) already holds the CPU lock.
+	 */
+	if (lkl_shutdown) {
+		ret = run_syscall(no, params);
+		task_work_run();
+		do_signal(NULL);
+
+		if (no == __NR_reboot) {
+			thread_sched_jb();
+		}
+
+		LKL_TRACE("Shutdown syscall=%li done\n", no);
+		return ret;
+	}
 
 	ret = lkl_cpu_get();
 	if (ret < 0) {
@@ -251,13 +274,7 @@ long lkl_syscall(long no, long *params)
 		switch_to_host_task(task);
 	}
 
-	/*
-	 * Stop signal handling when LKL is shutting down. We cannot deliver
-	 * signals because we are shutting down the kernel.
-	 */
-	if (!lkl_shutdown) {
-		do_signal(NULL);
-	}
+	do_signal(NULL);
 
 	if (no == __NR_reboot) {
 		thread_sched_jb();
@@ -274,6 +291,10 @@ out:
 }
 
 static struct task_struct *idle_host_task;
+
+extern _Atomic(int) lkl_exit_status;
+extern _Atomic(int) lkl_received_signal;
+extern _Atomic(bool) lkl_shutdown;
 
 /* called from idle, don't failed, don't block */
 void wakeup_idle_host_task(void)
@@ -295,6 +316,21 @@ static int idle_host_task_loop(void *unused)
 	for (;;) {
 		lkl_cpu_put();
 		lkl_ops->sem_down(ti->sched_sem);
+
+		if (lkl_shutdown) {
+
+			/**
+			 * Notify the host of the shutdown.
+			 *
+			 * Note that we are not releasing the CPU lock here, which allows
+			 * the termination code to do syscalls directly.
+			 */
+			lkl_ops->terminate(lkl_exit_status, lkl_received_signal);
+
+			lkl_ops->thread_exit();
+			return 0;
+		}
+
 		if (idle_host_task == NULL) {
 			lkl_ops->thread_exit();
 			return 0;
@@ -368,13 +404,6 @@ int host0_init(void)
 void syscalls_cleanup(void)
 {
 	LKL_TRACE("enter\n");
-	if (idle_host_task) {
-		struct thread_info *ti = task_thread_info(idle_host_task);
-
-		idle_host_task = NULL;
-		lkl_ops->sem_up(ti->sched_sem);
-		lkl_ops->thread_join(ti->tid);
-	}
 
 	if (lkl_ops->tls_free)
 		lkl_ops->tls_free(task_key);
