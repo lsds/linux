@@ -163,19 +163,15 @@ long lkl_sys_halt(void)
 
 	is_running = false;
 
-	lkl_printf("lkl_sys_halt(): Shutting down CPU\n");
-	lkl_cpu_wait_shutdown();
+	//lkl_cpu_wait_shutdown();
 
-	lkl_printf("lkl_sys_halt(): Syscalls cleanup\n");
-	syscalls_cleanup();
+	//syscalls_cleanup();
 
-	lkl_printf("lkl_sys_halt(): Threads cleanup\n");
-	threads_cleanup();
+	// threads_cleanup();
 	/* Shutdown the clockevents source. */
-	tick_suspend_local();
-	free_mem();
-	lkl_printf("lkl_sys_halt(): thread_join()\n");
-	lkl_ops->thread_join(current_thread_info()->tid);
+	//tick_suspend_local();
+	//free_mem();
+	//lkl_ops->thread_join(current_thread_info()->tid);
 
 	return 0;
 }
