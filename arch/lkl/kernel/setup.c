@@ -163,6 +163,13 @@ long lkl_sys_halt(void)
 
 	is_running = false;
 
+	/**
+	 * TODO: We may have cloned host threads that did not terminate,
+	 * and prevent us from shutting down the LKL CPU.
+	 *
+	 * As a workaround, we do not shutdown all threads.
+	 */
+
 	//lkl_cpu_wait_shutdown();
 
 	//syscalls_cleanup();
