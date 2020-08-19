@@ -331,10 +331,6 @@ static int idle_host_task_loop(void *unused)
 			return 0;
 		}
 
-		if (idle_host_task == NULL) {
-			lkl_ops->thread_exit();
-			return 0;
-		}
 		schedule_tail(ti->prev_sched);
 	}
 }
