@@ -111,7 +111,11 @@ static void kill_thread(struct thread_info *ti)
 		lkl_shutdown = true;
 
 		ti->dead = true;
+		lkl_ops->sem_up(ti->sched_sem);
+		lkl_ops->thread_join(ti->tid);
+		ti->tid = NULL;
 	}
+
 	lkl_ops->sem_free(ti->sched_sem);
 	ti->sched_sem = NULL;
 }

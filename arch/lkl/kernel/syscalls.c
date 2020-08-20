@@ -127,8 +127,9 @@ _Atomic(int) lkl_received_signal;
 /* Use this to record an ongoing LKL shutdown */
 _Atomic(bool) lkl_shutdown = false;
 
-/* Returns the task_struct associated with the current lthread */
+static struct task_struct *idle_host_task;
 
+/* Returns the task_struct associated with the current lthread */
 struct task_struct* lkl_get_current_task_struct(void)
 {
 	return lkl_ops->tls_get(task_key);
@@ -150,6 +151,18 @@ long lkl_syscall(long no, long *params)
 	 * host task) already holds the CPU lock.
 	 */
 	if (lkl_shutdown) {
+
+		/**
+		 * Only permit the idle host task to issue system calls now, because
+		 * it is invoking the shutdown sequence.
+		 */
+		if (current != idle_host_task) {
+			LKL_TRACE(
+				"Ignoring userspace syscall (current->comm=%s allowed=%s)\n",
+				current->comm, idle_host_task->comm);
+			return -ENOENT;
+		}
+
 		ret = run_syscall(no, params);
 		task_work_run();
 		do_signal(NULL);
@@ -289,8 +302,6 @@ out:
 
 	return ret;
 }
-
-static struct task_struct *idle_host_task;
 
 extern _Atomic(int) lkl_exit_status;
 extern _Atomic(int) lkl_received_signal;
