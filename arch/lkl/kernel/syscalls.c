@@ -299,6 +299,9 @@ static int idle_host_task_loop(void *unused)
 			lkl_ops->thread_exit();
 			return 0;
 		}
+		// any pending signals, capture them in lists per task
+		// so we can send them to the appropriate task later
+		move_signals_to_task();
 		schedule_tail(ti->prev_sched);
 	}
 }

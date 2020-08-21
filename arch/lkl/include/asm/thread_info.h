@@ -7,6 +7,15 @@
 #include <asm/types.h>
 #include <asm/processor.h>
 #include <asm/host_ops.h>
+#include <linux/signal_types.h>
+#include <linux/spinlock_types.h>
+
+struct ksignal_list_node
+{
+	struct ksignal sig;
+	struct ksignal_list_node *next;	// consider using the kernel lists, but they are doubly linked and maybe clumsy
+};
+
 
 typedef struct {
 	unsigned long seg;
@@ -29,6 +38,10 @@ struct thread_info {
 	/* The task for any child that was created during syscall execution.  Only
 	 * valid on return from a clone-family syscall. */
 	struct task_struct *cloned_child;
+
+	/* a linked list of pending signals, pushed onto here as they are detected in move_signals_to_task */
+	spinlock_t signal_list_lock;	/* the macros seem to require generating code, so do the init in the thread_info creation fn */
+	struct ksignal_list_node* signal_list;
 };
 
 #define INIT_THREAD_INFO(tsk)				\

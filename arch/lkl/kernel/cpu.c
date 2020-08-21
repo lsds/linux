@@ -86,7 +86,7 @@ static void __cpu_try_get_unlock(int lock_ret, int n)
 void lkl_cpu_change_owner(lkl_thread_t owner)
 {
 	lkl_ops->mutex_lock(cpu.lock);
-	if (cpu.count > 1)
+	if (cpu.count > 1) // HACK!!! was 1
 		lkl_bug("bad count while changing owner\n");
 	cpu.owner = owner;
 	lkl_ops->mutex_unlock(cpu.lock);
