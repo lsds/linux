@@ -160,7 +160,7 @@ long lkl_syscall(long no, long *params)
 			LKL_TRACE(
 				"Ignoring userspace syscall (current->comm=%s allowed=%s)\n",
 				current->comm, idle_host_task->comm);
-			return -ENOENT;
+			return -ENOTSUPP;
 		}
 
 		ret = run_syscall(no, params);
