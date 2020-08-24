@@ -270,6 +270,7 @@ out:
 	LKL_TRACE("done (no=%li task=%s current=%s ret=%i)\n", no,
 		  task ? task->comm : "NULL", current->comm, ret);
 
+    send_current_signals(NULL);
 	return ret;
 }
 
@@ -302,6 +303,8 @@ static int idle_host_task_loop(void *unused)
 		// any pending signals, capture them in lists per task
 		// so we can send them to the appropriate task later
 		move_signals_to_task();
+	//	initialize_uctx(&uc, NULL);
+    //	send_current_signals(&uc);
 		schedule_tail(ti->prev_sched);
 	}
 }

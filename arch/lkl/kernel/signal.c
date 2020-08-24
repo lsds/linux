@@ -6,7 +6,7 @@
 #include <asm-generic/ucontext.h>
 #include <asm/thread_info.h>
 
-static void initialize_uctx(struct ucontext *uctx, const struct pt_regs *regs)
+void initialize_uctx(struct ucontext *uctx, const struct pt_regs *regs)
 {
     if(regs)
     {
@@ -37,10 +37,10 @@ static void initialize_uctx(struct ucontext *uctx, const struct pt_regs *regs)
  * space application (could lead to inclusion of ARCH specific code)
  */
 static void handle_signal(struct ksignal *ksig, struct ucontext *uctx)
-{
-    
-    lkl_printf("%s: line %d - signal %d\n", __func__, __LINE__, ksig->sig);
+{ 
+    lkl_printf("Start - %s: line %d - signal %d\n", __func__, __LINE__, ksig->sig);
     ksig->ka.sa.sa_handler(ksig->sig, (void*)&ksig->info, (void*)uctx);
+    lkl_printf("End - %s: line %d - signal %d\n", __func__, __LINE__, ksig->sig);
 }
 
 
@@ -48,8 +48,8 @@ static void handle_signal(struct ksignal *ksig, struct ucontext *uctx)
 /* see thread_info.h for this:
 struct ksignal_list_node
 {
-	ksignal sig;
-	ksignal_list_node *next;
+    ksignal sig;
+    ksignal_list_node *next;
 };
 
 */
@@ -58,11 +58,13 @@ struct ksignal_list_node
     Walk to the end of the list and make it point at the new node
     may replace with the proper linux lists.
 */
+DEFINE_SPINLOCK(signal_lists_lock);
 
 void append_ksignal_node(struct thread_info *task, struct ksignal_list_node* node)
 {
     struct ksignal_list_node **node_ptr;
-    spin_lock(&task->signal_list_lock);
+    spin_lock(&signal_lists_lock);
+    //spin_lock(&task->signal_list_lock);
     node_ptr = &task->signal_list;
 
     while (*node_ptr) {
@@ -71,18 +73,19 @@ void append_ksignal_node(struct thread_info *task, struct ksignal_list_node* nod
     }
         
     *node_ptr = node;
-    spin_unlock(&task->signal_list_lock);
+    //spin_unlock(&task->signal_list_lock);
+    spin_unlock(&signal_lists_lock);
 }    
 
 void move_signals_to_task(void)
 {
-	struct ksignal ksig;    // place to hold retrieved signal
+    struct ksignal ksig;    // place to hold retrieved signal
     // get the lkl local version of the current task, so we can store the signals
     // in a list hanging off it.
     struct thread_info *current_task;
     current_task = task_thread_info(current);   // avoid annoying warning warning: ISO C90 forbids mixed declarations and code [-Wdeclaration-after-statement]  
-	while (get_signal(&ksig)) {
-		struct ksignal_list_node* node = kmalloc(sizeof(struct ksignal_list_node), GFP_KERNEL); // may sleep, is that ok?
+    while (get_signal(&ksig)) {
+    	struct ksignal_list_node* node = kmalloc(sizeof(struct ksignal_list_node), GFP_KERNEL); // may sleep, is that ok?
         
         lkl_printf("%s: %d\n", __func__, __LINE__);
         if (node == NULL) {
@@ -92,7 +95,7 @@ void move_signals_to_task(void)
         memcpy(&node->sig, &ksig, sizeof(ksig));
         node->next = NULL;
         append_ksignal_node(current_task, node);
-	}
+    }
 }
 
 int get_next_ksignal(struct thread_info *task, struct ksignal* sig)
@@ -100,28 +103,39 @@ int get_next_ksignal(struct thread_info *task, struct ksignal* sig)
     struct ksignal_list_node *next;
     struct ksignal_list_node *node;
 
-    spin_lock(&task->signal_list_lock);
+    spin_lock(&signal_lists_lock);
+    //spin_lock(&task->signal_list_lock);
     node = task->signal_list;
 
     if (!node) {
-        spin_unlock(&task->signal_list_lock);
+        //spin_unlock(&task->signal_list_lock);
+        spin_unlock(&signal_lists_lock);
         return 0; // no pending signals
     }
 
     next = node->next;
     task->signal_list = next; // drop the head
     
-    spin_unlock(&task->signal_list_lock);
+    //spin_unlock(&task->signal_list_lock);
+    spin_unlock(&signal_lists_lock);
 
     memcpy(sig, &node->sig, sizeof(*sig)); // copy the signal back to the caller
     kfree(node);
     return 1;
 }    
 
-void send_current_signals(struct pt_regs *regs)
+void send_current_signals(struct ucontext *uctx)
 {
     struct thread_info *current_task = task_thread_info(current);
     struct ksignal ksig;
+    
+    struct ucontext uc;
+    
+    if (uctx == NULL) {
+        uctx = &uc;
+        memset(uctx, 0, sizeof(uc));
+        initialize_uctx(uctx, NULL);
+    }
 
     LKL_TRACE("enter\n");
     
@@ -129,15 +143,12 @@ void send_current_signals(struct pt_regs *regs)
     while (get_next_ksignal(current_task, &ksig)) {
         // usually there is nothing to send so only set up the
         // registers if there is something to do.
-        struct ucontext uc;
-        memset(&uc, 0, sizeof(uc));
-        initialize_uctx(&uc, regs);
         
         lkl_printf("%s: %d\n", __func__, __LINE__);
         LKL_TRACE("ksig.sig=", ksig.sig);
 
         /* Whee!  Actually deliver the signal.  */
-        handle_signal(&ksig, &uc); 
+        handle_signal(&ksig, uctx); 
     }
 }
 
@@ -149,6 +160,9 @@ void lkl_process_trap(int signr, struct ucontext *uctx)
 
     LKL_TRACE("enter\n");
 
+    move_signals_to_task();
+    //send_current_signals(&uctx);
+#if 0
     while (get_signal(&ksig)) {
         LKL_TRACE("ksig.sig=", ksig.sig);
 
@@ -159,16 +173,21 @@ void lkl_process_trap(int signr, struct ucontext *uctx)
             break;
         }
     }
+#endif
 }
 
 void do_signal(struct pt_regs *regs)
 {
-    struct ksignal ksig;
+    //struct ksignal ksig;
     struct ucontext uc;
+    memset(&uc, 0, sizeof(uc));
+    initialize_uctx(&uc, regs);
 
     LKL_TRACE("enter\n");
     move_signals_to_task();
   // turns out sending to the appropriate thread here may explode as we switch  send_current_signals(regs);
+    // initialize_uctx(&uc, regs);
+    // send_current_signals(&uc);
 #if 0
     memset(&uc, 0, sizeof(uc));
     initialize_uctx(&uc, regs);
