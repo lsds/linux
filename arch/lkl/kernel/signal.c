@@ -168,7 +168,7 @@ void do_signal(struct pt_regs *regs)
 
     LKL_TRACE("enter\n");
     move_signals_to_task();
-    send_current_signals(regs);
+  // turns out sending to the appropriate thread here may explode as we switch  send_current_signals(regs);
 #if 0
     memset(&uc, 0, sizeof(uc));
     initialize_uctx(&uc, regs);
