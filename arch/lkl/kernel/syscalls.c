@@ -270,6 +270,7 @@ out:
 	LKL_TRACE("done (no=%li task=%s current=%s ret=%i)\n", no,
 		  task ? task->comm : "NULL", current->comm, ret);
 
+	// experiment indicates that all the sending happens here, not in the idle loop.
     send_current_signals(NULL);
 	return ret;
 }
@@ -303,8 +304,10 @@ static int idle_host_task_loop(void *unused)
 		// any pending signals, capture them in lists per task
 		// so we can send them to the appropriate task later
 		move_signals_to_task();
-	//	initialize_uctx(&uc, NULL);
-    //	send_current_signals(&uc);
+		// I am not convinced any signas are ever available here
+		// if the send at the end of lkl_syscall is removed nothing
+		// arrives in my test case
+    	send_current_signals(NULL);
 		schedule_tail(ti->prev_sched);
 	}
 }

@@ -38,21 +38,10 @@ void initialize_uctx(struct ucontext *uctx, const struct pt_regs *regs)
  */
 static void handle_signal(struct ksignal *ksig, struct ucontext *uctx)
 { 
-    lkl_printf("Start - %s: line %d - signal %d\n", __func__, __LINE__, ksig->sig);
+    // lkl_printf("Start - %s: line %d - signal %d\n", __func__, __LINE__, ksig->sig);
     ksig->ka.sa.sa_handler(ksig->sig, (void*)&ksig->info, (void*)uctx);
-    lkl_printf("End - %s: line %d - signal %d\n", __func__, __LINE__, ksig->sig);
+    // lkl_printf("End - %s: line %d - signal %d\n", __func__, __LINE__, ksig->sig);
 }
-
-
-
-/* see thread_info.h for this:
-struct ksignal_list_node
-{
-    ksignal sig;
-    ksignal_list_node *next;
-};
-
-*/
 
 /*
     Walk to the end of the list and make it point at the new node
