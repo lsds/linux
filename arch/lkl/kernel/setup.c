@@ -163,14 +163,22 @@ long lkl_sys_halt(void)
 
 	is_running = false;
 
-	lkl_cpu_wait_shutdown();
+	/**
+	 * TODO: We may have cloned host threads that did not terminate,
+	 * and prevent us from shutting down the LKL CPU.
+	 *
+	 * As a workaround, we do not shutdown all threads.
+	 */
 
-	syscalls_cleanup();
-	threads_cleanup();
+	//lkl_cpu_wait_shutdown();
+
+	//syscalls_cleanup();
+
+	// threads_cleanup();
 	/* Shutdown the clockevents source. */
-	tick_suspend_local();
-	free_mem();
-	lkl_ops->thread_join(current_thread_info()->tid);
+	//tick_suspend_local();
+	//free_mem();
+	//lkl_ops->thread_join(current_thread_info()->tid);
 
 	return 0;
 }
