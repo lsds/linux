@@ -38,6 +38,17 @@ static void handle_signal(struct ksignal *ksig, struct ucontext *uctx)
     ksig->ka.sa.sa_handler(ksig->sig, (void*)&ksig->info, (void*)uctx);
 }
 
+/*
+    While you might think this should call move_signals_to_task, send_current_signals
+    it is different here in that only a specific signal is being requested.
+    This is the sync signal case and that signal will have just been forced into the
+    regular task queue of signals so the pre-existing code will work. See lkl_do_trap
+
+    Up for debate though is whether it would be better to either directly invoke
+    the handler in lkl_do_trap or here to have versions of move_signals_to_task, send_current_signals
+    that operate by scanning the list for signr, the given signal.
+*/
+
 void lkl_process_trap(int signr, struct ucontext *uctx)
 {
     struct ksignal ksig;
@@ -50,25 +61,98 @@ void lkl_process_trap(int signr, struct ucontext *uctx)
         /* Handle required signal */
         if(signr == ksig.sig)
         {
+            LKL_TRACE("trap task %p %d\n", current, signr);
             handle_signal(&ksig, uctx);
             break;
         }
     }
 }
 
-void do_signal(struct pt_regs *regs)
+/*
+    Walk to the end of the list and make it point at the new node
+*/
+
+
+void append_ksignal_node(struct thread_info *task, struct ksignal_list_node* node)
 {
-    struct ksignal ksig;
-    struct ucontext uc;
+    volatile struct ksignal_list_node **node_ptr;
+    spin_lock(&task->signal_list_lock);
+    node_ptr = &task->signal_list;
 
-    LKL_TRACE("enter\n");
+    while (*node_ptr) {
+        volatile struct ksignal_list_node *next_node = *node_ptr;
+        node_ptr = &(next_node->next);
+    }
+        
+    *node_ptr = node;
+    spin_unlock(&task->signal_list_lock);
+}    
 
-    memset(&uc, 0, sizeof(uc));
-    initialize_uctx(&uc, regs);
+// probably needs to be called with the cpu lock
+void move_signals_to_task(void)
+{
+    struct ksignal ksig;    // place to hold retrieved signal
+    // get the lkl local version of the current task, so we can store the signals
+    // in a list hanging off it.
+    struct thread_info *current_task;
+    current_task = task_thread_info(current); 
     while (get_signal(&ksig)) {
-        LKL_TRACE("ksig.sig=", ksig.sig);
-
-        /* Whee!  Actually deliver the signal.  */
-        handle_signal(&ksig, &uc);
+    	struct ksignal_list_node* node = kmalloc(sizeof(struct ksignal_list_node), GFP_KERNEL); // may sleep, is that ok?       
+        if (node == NULL) {
+            lkl_bug("kmalloc returned NULL");
+        }
+        LKL_TRACE("Appending task %p signal %d\n", current, ksig.sig);
+        memcpy(&node->sig, &ksig, sizeof(ksig));
+        node->next = NULL;
+        append_ksignal_node(current_task, node);
     }
 }
+
+int get_next_ksignal(struct thread_info *task, struct ksignal* sig)
+{
+    struct ksignal_list_node *next;
+    struct ksignal_list_node *node;
+
+    spin_lock(&task->signal_list_lock);
+    node = task->signal_list;
+
+    if (!node) {
+        spin_unlock(&task->signal_list_lock);
+        return 0; // no pending signals
+    }
+
+    next = node->next;
+    task->signal_list = next; // drop the head
+    
+    spin_unlock(&task->signal_list_lock);
+    
+    memcpy(sig, &node->sig, sizeof(*sig)); // copy the signal back to the caller
+    LKL_TRACE("Fetching task %p signal %d\n", current, sig->sig);
+    kfree(node);
+    return 1;
+}    
+
+// Must be called without the cpu lock
+void send_current_signals(struct ucontext *uctx)
+{
+    struct thread_info *current_task = task_thread_info(current);
+    struct ksignal ksig;
+    
+    struct ucontext uc;
+    
+    if (uctx == NULL) {
+        uctx = &uc;
+        memset(uctx, 0, sizeof(uc));
+        initialize_uctx(uctx, NULL);
+    }
+
+    LKL_TRACE("enter\n");
+    
+    while (get_next_ksignal(current_task, &ksig)) {
+        /* Actually deliver the signal.  */
+        handle_signal(&ksig, uctx); 
+    }
+}
+
+
+
