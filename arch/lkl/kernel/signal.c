@@ -98,7 +98,7 @@ void move_signals_to_task(void)
     while (get_signal(&ksig)) {
     	struct ksignal_list_node* node = kmalloc(sizeof(struct ksignal_list_node), GFP_KERNEL); // may sleep, is that ok?       
         if (node == NULL) {
-            lkl_bug("kmalloc returned NULL");
+            lkl_bug("Unable to allocate memory to hold signal state.");
         }
         LKL_TRACE("Appending task %p signal %d\n", current, ksig.sig);
         memcpy(&node->sig, &ksig, sizeof(ksig));
