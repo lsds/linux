@@ -14,7 +14,7 @@
 struct ksignal_list_node
 {
 	struct ksignal sig;
-	volatile struct ksignal_list_node *next;	/* consider using the kernel lists, but they are doubly linked and clumsy in this simple case */
+	struct ksignal_list_node *next;	/* consider using the kernel lists, but they are doubly linked and clumsy in this simple case */
 };
 
 typedef struct {
@@ -39,9 +39,10 @@ struct thread_info {
 	 * valid on return from a clone-family syscall. */
 	struct task_struct *cloned_child;
 	
+	/* lock for the list below, the init is in the thread_info creation fn */
+ 	spinlock_t signal_list_lock;	
  	/* a linked list of pending signals, pushed onto here as they are detected in move_signals_to_task */
- 	spinlock_t signal_list_lock;	/* the init is in the thread_info creation fn */
- 	volatile struct ksignal_list_node* signal_list;
+ 	struct ksignal_list_node* signal_list;
 };
 
 #define INIT_THREAD_INFO(tsk)				\

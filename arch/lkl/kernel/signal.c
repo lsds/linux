@@ -72,15 +72,14 @@ void lkl_process_trap(int signr, struct ucontext *uctx)
     Walk to the end of the list and make it point at the new node
 */
 
-
-void append_ksignal_node(struct thread_info *task, struct ksignal_list_node* node)
+static void append_ksignal_node(struct thread_info *task, struct ksignal_list_node* node)
 {
-    volatile struct ksignal_list_node **node_ptr;
+    struct ksignal_list_node **node_ptr;
     spin_lock(&task->signal_list_lock);
     node_ptr = &task->signal_list;
 
     while (*node_ptr) {
-        volatile struct ksignal_list_node *next_node = *node_ptr;
+        struct ksignal_list_node *next_node = *node_ptr;
         node_ptr = &(next_node->next);
     }
         
@@ -88,7 +87,7 @@ void append_ksignal_node(struct thread_info *task, struct ksignal_list_node* nod
     spin_unlock(&task->signal_list_lock);
 }    
 
-// probably needs to be called with the cpu lock
+// needs to be called with the cpu lock held
 void move_signals_to_task(void)
 {
     struct ksignal ksig;    // place to hold retrieved signal
@@ -108,7 +107,7 @@ void move_signals_to_task(void)
     }
 }
 
-int get_next_ksignal(struct thread_info *task, struct ksignal* sig)
+static int get_next_ksignal(struct thread_info *task, struct ksignal* sig)
 {
     struct ksignal_list_node *next;
     struct ksignal_list_node *node;
@@ -132,7 +131,7 @@ int get_next_ksignal(struct thread_info *task, struct ksignal* sig)
     return 1;
 }    
 
-// Must be called without the cpu lock
+// Must be called without the cpu lock held
 void send_current_signals(struct ucontext *uctx)
 {
     struct thread_info *current_task = task_thread_info(current);

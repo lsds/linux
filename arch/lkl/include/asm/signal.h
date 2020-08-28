@@ -7,12 +7,12 @@ struct thread_info;
 struct ksignal_list_node;
 struct ksignal;
 
-void do_signal(struct pt_regs *regs);
 void lkl_process_trap(int signr, struct ucontext *uctx);
  
-extern void append_ksignal_node(struct thread_info *task, struct ksignal_list_node* node); 
-extern void move_signals_to_task(void);
-extern int get_next_ksignal(struct thread_info *task, struct ksignal* sig);
+/* capture pending signals and move them to a task specific list */
+/* cpu lock must be held */
+void move_signals_to_task(void);
 
-//void initialize_uctx(struct ucontext *uctx, const struct pt_regs *regs);
+/* send any signals targeting this task */
+/* cpu lock must not be held */
 void send_current_signals(struct ucontext *uctx);
