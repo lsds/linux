@@ -96,8 +96,8 @@ static dma_addr_t lkl_map_page(struct device *dev, struct page *page,
 	}
 
 	_start_dma_addr = __phys_to_dma(dev, (phys_addr_t)_lkl_io_tlb_start);
-	map = swiotlb_tbl_map_single(dev, _start_dma_addr, phys, size, dir,
-				     attrs);
+	map = swiotlb_tbl_map_single(dev, _start_dma_addr, phys, size, size,
+				     dir, attrs);
 	if (map == (phys_addr_t)DMA_MAPPING_ERROR) {
 		printk("LKL SWIOTLB: swiotlb_tbl_map_single map error\n");
 		return map;
@@ -115,7 +115,7 @@ static void lkl_unmap_single(struct device *dev, dma_addr_t dev_addr,
 	phys_addr_t phys = __dma_to_phys(dev, dev_addr);
 
 	if (is_swiotlb_buffer(phys))
-		swiotlb_tbl_unmap_single(dev, phys, size, dir, attrs);
+		swiotlb_tbl_unmap_single(dev, phys, size, size, dir, attrs);
 
 	return;
 }
