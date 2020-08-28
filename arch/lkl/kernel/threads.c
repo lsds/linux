@@ -24,7 +24,8 @@ static int init_ti(struct thread_info *ti)
 	ti->cloned_child = NULL;
 
  	spin_lock_init(&ti->signal_list_lock);
- 	ti->signal_list = NULL;
+ 	ti->signal_list_head = NULL;
+ 	ti->signal_list_tail = NULL;
 
 	return 0;
 }
@@ -136,7 +137,7 @@ void free_thread_stack(struct task_struct *tsk)
 	/* free any linked list of pending signals */
 	/* note that we do not need to take the lock as the thread is dead and ought to be unreachable*/
 
-	struct ksignal_list_node* signal_list = ti->signal_list;
+	struct ksignal_list_node* signal_list = ti->signal_list_head;
 	while (signal_list != NULL) {
 		struct ksignal_list_node *next = signal_list->next;
 		kfree(signal_list);

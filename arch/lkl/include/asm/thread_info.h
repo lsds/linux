@@ -42,7 +42,8 @@ struct thread_info {
 	/* lock for the list below, the init is in the thread_info creation fn */
  	spinlock_t signal_list_lock;	
  	/* a linked list of pending signals, pushed onto here as they are detected in move_signals_to_task */
- 	struct ksignal_list_node* signal_list;
+ 	struct ksignal_list_node* signal_list_head;
+ 	struct ksignal_list_node* signal_list_tail;
 };
 
 #define INIT_THREAD_INFO(tsk)				\

@@ -69,21 +69,22 @@ void lkl_process_trap(int signr, struct ucontext *uctx)
 }
 
 /*
-    Walk to the end of the list and make it point at the new node
+   Get the end of the list and make it point at the new node,
+   if there were no nodes before then bot head and tail point at this one node
 */
 
 static void append_ksignal_node(struct thread_info *task, struct ksignal_list_node* node)
 {
-    struct ksignal_list_node **node_ptr;
+    struct ksignal_list_node *ptr;
     spin_lock(&task->signal_list_lock);
-    node_ptr = &task->signal_list;
-
-    while (*node_ptr) {
-        struct ksignal_list_node *next_node = *node_ptr;
-        node_ptr = &(next_node->next);
+    ptr = task->signal_list_tail;
+    if (ptr == NULL) { // list is empty
+        task->signal_list_head = node;
+        task->signal_list_tail = node;
+    } else {
+        ptr->next = node;
     }
-        
-    *node_ptr = node;
+
     spin_unlock(&task->signal_list_lock);
 }    
 
@@ -113,7 +114,7 @@ static int get_next_ksignal(struct thread_info *task, struct ksignal* sig)
     struct ksignal_list_node *node;
 
     spin_lock(&task->signal_list_lock);
-    node = task->signal_list;
+    node = task->signal_list_head;
 
     if (!node) {
         spin_unlock(&task->signal_list_lock);
@@ -121,7 +122,10 @@ static int get_next_ksignal(struct thread_info *task, struct ksignal* sig)
     }
 
     next = node->next;
-    task->signal_list = next; // drop the head
+    task->signal_list_head = next;      // drop the head
+    if (next == NULL)                   // was that the last node?
+        task->signal_list_tail = NULL;  // if so there is now no tail
+        
     
     spin_unlock(&task->signal_list_lock);
     
