@@ -96,7 +96,6 @@ void move_signals_to_task(void)
     struct thread_info *current_task;
     current_task = task_thread_info(current); 
     while (get_signal(&ksig)) {
-<<<<<<< HEAD
     	struct ksignal_list_node* node = kmalloc(sizeof(struct ksignal_list_node), GFP_KERNEL); // may sleep, is that ok?       
         if (node == NULL) {
             lkl_bug("kmalloc returned NULL");
@@ -149,11 +148,8 @@ void send_current_signals(struct ucontext *uctx)
     LKL_TRACE("enter\n");
     
     while (get_next_ksignal(current_task, &ksig)) {
-    	LKL_TRACE("ksig.sig=%d", ksig.sig);
+        LKL_TRACE("ksig.sig=%d", ksig.sig);
         /* Actually deliver the signal.  */
         handle_signal(&ksig, uctx); 
     }
 }
-
-
-
