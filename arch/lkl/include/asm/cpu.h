@@ -3,6 +3,10 @@
 
 int lkl_cpu_get(void);
 void lkl_cpu_put(void);
+
+int lkl_check_cpu_owner(const char *func_name);
+void lkl_print_cpu_state(const char *func_name);
+
 int lkl_cpu_try_run_irq(int irq);
 int lkl_cpu_init(void);
 void lkl_cpu_shutdown(void);

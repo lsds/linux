@@ -165,8 +165,14 @@ long lkl_syscall(long no, long *params)
 
 		ret = run_syscall(no, params);
 		task_work_run();
-		move_signals_to_task();
-		send_current_signals(NULL);
+
+		/*
+			Do NOT send signals now. That mechanism relies on lkl_cpu_get/put
+			which is disabled for shutdown.
+
+			move_signals_to_task();
+			send_current_signals(NULL);
+		*/
 
 		if (no == __NR_reboot) {
 			thread_sched_jb();
@@ -297,13 +303,15 @@ long lkl_syscall(long no, long *params)
 	}
 
 out:
+	/* run any signal handlers expected to run on this thread */
+	send_current_signals(NULL);
 	lkl_cpu_put();
 	
 	LKL_TRACE("done (no=%li task=%s current=%s ret=%i)\n", no,
 		  task ? task->comm : "NULL", current->comm, ret);
 	/* once cpu is released, run any pending signal handlers */
 	/* experiment indicates that all the signal sending happens here, not in the idle loop. */ 
-	send_current_signals(NULL);
+	//send_current_signals(NULL);
 	return ret;
 }
 
@@ -332,7 +340,14 @@ static int idle_host_task_loop(void *unused)
 		// any pending signals, capture them in lists per task
 		// so we can send them to the appropriate task later
 		move_signals_to_task();
+		// I am not convinced any signas are ever available here
+		// if the send at the end of lkl_syscall is removed nothing
+		// arrives in my test case
+		send_current_signals(NULL);
+
+		/* Really? */
 		lkl_cpu_put();
+		/* I can only guess this essentialy takes the lock again */
 		lkl_ops->sem_down(ti->sched_sem);
 
 		if (lkl_shutdown) {
@@ -349,10 +364,6 @@ static int idle_host_task_loop(void *unused)
 			return 0;
 		}
 
-		// I am not convinced any signas are ever available here
-		// if the send at the end of lkl_syscall is removed nothing
-		// arrives in my test case
-		send_current_signals(NULL);
 
 		schedule_tail(ti->prev_sched);
 	}
