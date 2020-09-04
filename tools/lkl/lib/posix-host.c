@@ -6,6 +6,7 @@
 #include <assert.h>
 #include <unistd.h>
 #include <errno.h>
+#include <stdio.h>
 #include <string.h>
 #include <time.h>
 #include <stdint.h>
@@ -311,6 +312,42 @@ static long _gettid(void)
 #endif
 }
 
+static unsigned int cpuinfo_get(char *buffer, unsigned int buffer_len)
+{
+	/* TODO: The output of this function is hardcoded for now. */
+	int len;
+
+	len = snprintf(buffer, buffer_len,
+		"processor       : 0\n"
+		"cpu family      : 6\n"
+		"model           : 158\n"
+		"model name      : Intel(R) Xeon(R) CPU E3-1280 v6 @ 3.90GHz\n"
+		"stepping        : 9\n"
+		"microcode       : 0xb4\n"
+		"cpu MHz         : 800.063\n"
+		"cache size      : 8192 KB\n"
+		"physical id     : 0\n"
+		"siblings        : 1\n"
+		"core id         : 0\n"
+		"cpu cores       : 1\n"
+		"apicid          : 0\n"
+		"initial apicid  : 0\n"
+		"fpu             : yes\n"
+		"fpu_exception   : yes\n"
+		"cpuid level     : 22\n"
+		"wp              : yes\n"
+		"flags           : fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse3 clflush dts ac  pi mmx fxsr sse sse2 ss ht tm pbe syscall nx pdpe1gb rdtscp lm constant_tsc art arch_perfmon pebs bt rep_good nopl x  topology nonstop_tsc cpuid aperfmperf tsc_known_freq pni pclmulqdq dtes64 monitor ds_cpl vmx smx est tm2 ssse3 sdbg   fma cx16 xtpr pdcm pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand lahf_lm aabm   3dnowprefetch cpuid_fault epb invpcid_single pti ssbd ibrs ibpb stibp tpr_shadow vnmi flexpriority ept vpid fsgsbase   tsc_adjust bmi1 hle avx2 smep bmi2 erms invpcid rtm mpx rdseed adx smap clflushopt intel_pt xsaveopt xsavec xgetbv1   xsaves dtherm ida arat pln pts hwp hwp_notify hwp_act_window hwp_epp md_clear flush_l1d\n"
+		"bugs            : cpu_meltdown spectre_v1 spectre_v2 spec_store_bypass l1tf mds swapgs\n"
+		"bogomips        : 7824.00\n"
+		"clflush size    : 64\n"
+		"cache_alignment : 64\n"
+		"address sizes   : 39 bits physical, 48 bits virtual\n"
+		"power management: \n"
+		"\n");
+
+	return len;
+}
+
 struct lkl_host_operations lkl_host_ops = {
 	.panic = panic,
 	.thread_create = thread_create,
@@ -344,6 +381,7 @@ struct lkl_host_operations lkl_host_ops = {
 	.gettid = _gettid,
 	.jmp_buf_set = jmp_buf_set,
 	.jmp_buf_longjmp = jmp_buf_longjmp,
+	.cpuinfo_get = cpuinfo_get,
 };
 
 static int fd_get_capacity(struct lkl_disk disk, unsigned long long *res)
