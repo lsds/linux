@@ -98,19 +98,18 @@ include/uapi/linux/raw.h:CONFIG_MAX_RAW_DEVS
 
 for c in $configs
 do
-	leak_error=1
+	warn=1
 
 	for ignore in $config_leak_ignores
 	do
 		if echo "$INFILE:$c" | grep -q "$ignore$"; then
-			leak_error=
+			warn=
 			break
 		fi
 	done
 
-	if [ "$leak_error" = 1 ]; then
-		echo "error: $INFILE: leak $c to user-space" >&2
-		exit 1
+	if [ "$warn" = 1 ]; then
+		echo "warning: $INFILE: leak $c to user-space" >&2
 	fi
 done
 
