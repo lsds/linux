@@ -278,6 +278,25 @@ struct rvt_rq {
 	spinlock_t lock ____cacheline_aligned_in_smp;
 };
 
+/**
+ * rvt_get_rq_count - count numbers of request work queue entries
+ * in circular buffer
+ * @rq: data structure for request queue entry
+ * @head: head indices of the circular buffer
+ * @tail: tail indices of the circular buffer
+ *
+ * Return - total number of entries in the Receive Queue
+ */
+
+static inline u32 rvt_get_rq_count(struct rvt_rq *rq, u32 head, u32 tail)
+{
+	u32 count = head - tail;
+
+	if ((s32)count < 0)
+		count += rq->size;
+	return count;
+}
+
 /*
  * This structure holds the information that the send tasklet needs
  * to send a RDMA read response or atomic operation.
@@ -971,6 +990,41 @@ static inline void rvt_free_rq(struct rvt_rq *rq)
 	rq->kwq = NULL;
 	vfree(rq->wq);
 	rq->wq = NULL;
+}
+
+/**
+ * rvt_to_iport - Get the ibport pointer
+ * @qp: the qp pointer
+ *
+ * This function returns the ibport pointer from the qp pointer.
+ */
+static inline struct rvt_ibport *rvt_to_iport(struct rvt_qp *qp)
+{
+	struct rvt_dev_info *rdi = ib_to_rvt(qp->ibqp.device);
+
+	return rdi->ports[qp->port_num - 1];
+}
+
+/**
+ * rvt_rc_credit_avail - Check if there are enough RC credits for the request
+ * @qp: the qp
+ * @wqe: the request
+ *
+ * This function returns false when there are not enough credits for the given
+ * request and true otherwise.
+ */
+static inline bool rvt_rc_credit_avail(struct rvt_qp *qp, struct rvt_swqe *wqe)
+{
+	lockdep_assert_held(&qp->s_lock);
+	if (!(qp->s_flags & RVT_S_UNLIMITED_CREDIT) &&
+	    rvt_cmp_msn(wqe->ssn, qp->s_lsn + 1) > 0) {
+		struct rvt_ibport *rvp = rvt_to_iport(qp);
+
+		qp->s_flags |= RVT_S_WAIT_SSN_CREDIT;
+		rvp->n_rc_crwaits++;
+		return false;
+	}
+	return true;
 }
 
 struct rvt_qp_iter *rvt_qp_iter_init(struct rvt_dev_info *rdi,

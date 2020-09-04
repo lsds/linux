@@ -163,6 +163,8 @@ struct qede_rdma_dev {
 	struct list_head entry;
 	struct list_head rdma_event_list;
 	struct workqueue_struct *rdma_wq;
+	struct kref refcnt;
+	struct completion event_comp;
 	bool exp_recovery;
 };
 
@@ -175,6 +177,20 @@ enum qede_flags_bit {
 	QEDE_FLAGS_LINK_REQUESTED,
 	QEDE_FLAGS_PTP_TX_IN_PRORGESS,
 	QEDE_FLAGS_TX_TIMESTAMPING_EN
+};
+
+#define QEDE_DUMP_MAX_ARGS 4
+enum qede_dump_cmd {
+	QEDE_DUMP_CMD_NONE = 0,
+	QEDE_DUMP_CMD_NVM_CFG,
+	QEDE_DUMP_CMD_GRCDUMP,
+	QEDE_DUMP_CMD_MAX
+};
+
+struct qede_dump_info {
+	enum qede_dump_cmd cmd;
+	u8 num_args;
+	u32 args[QEDE_DUMP_MAX_ARGS];
 };
 
 struct qede_dev {
@@ -262,6 +278,7 @@ struct qede_dev {
 	struct qede_rdma_dev		rdma_info;
 
 	struct bpf_prog *xdp_prog;
+	struct qede_dump_info		dump_info;
 };
 
 enum QEDE_STATE {
@@ -557,12 +574,14 @@ int qede_add_tc_flower_fltr(struct qede_dev *edev, __be16 proto,
 #define RX_RING_SIZE		((u16)BIT(RX_RING_SIZE_POW))
 #define NUM_RX_BDS_MAX		(RX_RING_SIZE - 1)
 #define NUM_RX_BDS_MIN		128
+#define NUM_RX_BDS_KDUMP_MIN	63
 #define NUM_RX_BDS_DEF		((u16)BIT(10) - 1)
 
 #define TX_RING_SIZE_POW	13
 #define TX_RING_SIZE		((u16)BIT(TX_RING_SIZE_POW))
 #define NUM_TX_BDS_MAX		(TX_RING_SIZE - 1)
 #define NUM_TX_BDS_MIN		128
+#define NUM_TX_BDS_KDUMP_MIN	63
 #define NUM_TX_BDS_DEF		NUM_TX_BDS_MAX
 
 #define QEDE_MIN_PKT_LEN		64

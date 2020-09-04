@@ -26,15 +26,6 @@
 DEFINE_PER_CPU_PAGE_ALIGNED(struct irq_stack, irq_stack_backing_store) __visible;
 DECLARE_INIT_PER_CPU(irq_stack_backing_store);
 
-bool handle_irq(struct irq_desc *desc, struct pt_regs *regs)
-{
-	if (IS_ERR_OR_NULL(desc))
-		return false;
-
-	generic_handle_irq_desc(desc);
-	return true;
-}
-
 #ifdef CONFIG_VMAP_STACK
 /*
  * VMAP the backing store with guard pages
@@ -52,7 +43,7 @@ static int map_irq_stack(unsigned int cpu)
 		pages[i] = pfn_to_page(pa >> PAGE_SHIFT);
 	}
 
-	va = vmap(pages, IRQ_STACK_SIZE / PAGE_SIZE, GFP_KERNEL, PAGE_KERNEL);
+	va = vmap(pages, IRQ_STACK_SIZE / PAGE_SIZE, VM_MAP, PAGE_KERNEL);
 	if (!va)
 		return -ENOMEM;
 

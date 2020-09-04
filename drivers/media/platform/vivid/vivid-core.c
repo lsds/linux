@@ -616,6 +616,9 @@ static void vivid_dev_release(struct v4l2_device *v4l2_dev)
 
 	vivid_free_controls(dev);
 	v4l2_device_unregister(&dev->v4l2_dev);
+#ifdef CONFIG_MEDIA_CONTROLLER
+	media_device_cleanup(&dev->mdev);
+#endif
 	vfree(dev->scaled_line);
 	vfree(dev->blended_line);
 	vfree(dev->edid);
@@ -792,7 +795,7 @@ static int vivid_create_instance(struct platform_device *pdev, int inst)
 	if (no_error_inj && ccs_cap == -1)
 		ccs_cap = 7;
 
-	/* if ccs_cap == -1, then the use can select it using controls */
+	/* if ccs_cap == -1, then the user can select it using controls */
 	if (ccs_cap != -1) {
 		dev->has_crop_cap = ccs_cap & 1;
 		dev->has_compose_cap = ccs_cap & 2;
@@ -807,7 +810,7 @@ static int vivid_create_instance(struct platform_device *pdev, int inst)
 	if (no_error_inj && ccs_out == -1)
 		ccs_out = 7;
 
-	/* if ccs_out == -1, then the use can select it using controls */
+	/* if ccs_out == -1, then the user can select it using controls */
 	if (ccs_out != -1) {
 		dev->has_crop_out = ccs_out & 1;
 		dev->has_compose_out = ccs_out & 2;
@@ -1580,7 +1583,6 @@ static int vivid_remove(struct platform_device *pdev)
 
 #ifdef CONFIG_MEDIA_CONTROLLER
 		media_device_unregister(&dev->mdev);
-		media_device_cleanup(&dev->mdev);
 #endif
 
 		if (dev->has_vid_cap) {

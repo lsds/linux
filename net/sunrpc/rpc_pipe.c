@@ -1317,6 +1317,7 @@ rpc_gssd_dummy_populate(struct dentry *root, struct rpc_pipe *pipe_data)
 	q.len = strlen(gssd_dummy_clnt_dir[0].name);
 	clnt_dentry = d_hash_and_lookup(gssd_dentry, &q);
 	if (!clnt_dentry) {
+		__rpc_depopulate(gssd_dentry, gssd_dummy_clnt_dir, 0, 1);
 		pipe_dentry = ERR_PTR(-ENOENT);
 		goto out;
 	}
@@ -1416,8 +1417,7 @@ EXPORT_SYMBOL_GPL(gssd_running);
 
 static int rpc_fs_get_tree(struct fs_context *fc)
 {
-	fc->s_fs_info = get_net(fc->net_ns);
-	return vfs_get_super(fc, vfs_get_keyed_super, rpc_fill_super);
+	return get_tree_keyed(fc, rpc_fill_super, get_net(fc->net_ns));
 }
 
 static void rpc_fs_free_fc(struct fs_context *fc)

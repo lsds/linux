@@ -21,7 +21,7 @@
 #include <linux/module.h>
 #include <linux/seq_file.h>
 #include <linux/poll.h>
-#include <linux/reservation.h>
+#include <linux/dma-resv.h>
 #include <linux/mm.h>
 #include <linux/mount.h>
 #include <linux/pseudo_fs.h>
@@ -45,17 +45,50 @@ static char *dmabuffs_dname(struct dentry *dentry, char *buffer, int buflen)
 	size_t ret = 0;
 
 	dmabuf = dentry->d_fsdata;
-	mutex_lock(&dmabuf->lock);
+	spin_lock(&dmabuf->name_lock);
 	if (dmabuf->name)
 		ret = strlcpy(name, dmabuf->name, DMA_BUF_NAME_LEN);
-	mutex_unlock(&dmabuf->lock);
+	spin_unlock(&dmabuf->name_lock);
 
 	return dynamic_dname(dentry, buffer, buflen, "/%s:%s",
 			     dentry->d_name.name, ret > 0 ? name : "");
 }
 
+static void dma_buf_release(struct dentry *dentry)
+{
+	struct dma_buf *dmabuf;
+
+	dmabuf = dentry->d_fsdata;
+
+	BUG_ON(dmabuf->vmapping_counter);
+
+	/*
+	 * Any fences that a dma-buf poll can wait on should be signaled
+	 * before releasing dma-buf. This is the responsibility of each
+	 * driver that uses the reservation objects.
+	 *
+	 * If you hit this BUG() it means someone dropped their ref to the
+	 * dma-buf while still having pending operation to the buffer.
+	 */
+	BUG_ON(dmabuf->cb_shared.active || dmabuf->cb_excl.active);
+
+	dmabuf->ops->release(dmabuf);
+
+	mutex_lock(&db_list.lock);
+	list_del(&dmabuf->list_node);
+	mutex_unlock(&db_list.lock);
+
+	if (dmabuf->resv == (struct dma_resv *)&dmabuf[1])
+		dma_resv_fini(dmabuf->resv);
+
+	module_put(dmabuf->owner);
+	kfree(dmabuf->name);
+	kfree(dmabuf);
+}
+
 static const struct dentry_operations dma_buf_dentry_ops = {
 	.d_dname = dmabuffs_dname,
+	.d_release = dma_buf_release,
 };
 
 static struct vfsmount *dma_buf_mnt;
@@ -76,41 +109,6 @@ static struct file_system_type dma_buf_fs_type = {
 	.init_fs_context = dma_buf_fs_init_context,
 	.kill_sb = kill_anon_super,
 };
-
-static int dma_buf_release(struct inode *inode, struct file *file)
-{
-	struct dma_buf *dmabuf;
-
-	if (!is_dma_buf_file(file))
-		return -EINVAL;
-
-	dmabuf = file->private_data;
-
-	BUG_ON(dmabuf->vmapping_counter);
-
-	/*
-	 * Any fences that a dma-buf poll can wait on should be signaled
-	 * before releasing dma-buf. This is the responsibility of each
-	 * driver that uses the reservation objects.
-	 *
-	 * If you hit this BUG() it means someone dropped their ref to the
-	 * dma-buf while still having pending operation to the buffer.
-	 */
-	BUG_ON(dmabuf->cb_shared.active || dmabuf->cb_excl.active);
-
-	dmabuf->ops->release(dmabuf);
-
-	mutex_lock(&db_list.lock);
-	list_del(&dmabuf->list_node);
-	mutex_unlock(&db_list.lock);
-
-	if (dmabuf->resv == (struct reservation_object *)&dmabuf[1])
-		reservation_object_fini(dmabuf->resv);
-
-	module_put(dmabuf->owner);
-	kfree(dmabuf);
-	return 0;
-}
 
 static int dma_buf_mmap_internal(struct file *file, struct vm_area_struct *vma)
 {
@@ -165,7 +163,7 @@ static loff_t dma_buf_llseek(struct file *file, loff_t offset, int whence)
  * To support cross-device and cross-driver synchronization of buffer access
  * implicit fences (represented internally in the kernel with &struct fence) can
  * be attached to a &dma_buf. The glue for that and a few related things are
- * provided in the &reservation_object structure.
+ * provided in the &dma_resv structure.
  *
  * Userspace can query the state of these implicitly tracked fences using poll()
  * and related system calls:
@@ -195,8 +193,8 @@ static void dma_buf_poll_cb(struct dma_fence *fence, struct dma_fence_cb *cb)
 static __poll_t dma_buf_poll(struct file *file, poll_table *poll)
 {
 	struct dma_buf *dmabuf;
-	struct reservation_object *resv;
-	struct reservation_object_list *fobj;
+	struct dma_resv *resv;
+	struct dma_resv_list *fobj;
 	struct dma_fence *fence_excl;
 	__poll_t events;
 	unsigned shared_count, seq;
@@ -340,8 +338,10 @@ static long dma_buf_set_name(struct dma_buf *dmabuf, const char __user *buf)
 		kfree(name);
 		goto out_unlock;
 	}
+	spin_lock(&dmabuf->name_lock);
 	kfree(dmabuf->name);
 	dmabuf->name = name;
+	spin_unlock(&dmabuf->name_lock);
 
 out_unlock:
 	mutex_unlock(&dmabuf->lock);
@@ -387,7 +387,8 @@ static long dma_buf_ioctl(struct file *file,
 
 		return ret;
 
-	case DMA_BUF_SET_NAME:
+	case DMA_BUF_SET_NAME_A:
+	case DMA_BUF_SET_NAME_B:
 		return dma_buf_set_name(dmabuf, (const char __user *)arg);
 
 	default:
@@ -403,14 +404,13 @@ static void dma_buf_show_fdinfo(struct seq_file *m, struct file *file)
 	/* Don't count the temporary reference taken inside procfs seq_show */
 	seq_printf(m, "count:\t%ld\n", file_count(dmabuf->file) - 1);
 	seq_printf(m, "exp_name:\t%s\n", dmabuf->exp_name);
-	mutex_lock(&dmabuf->lock);
+	spin_lock(&dmabuf->name_lock);
 	if (dmabuf->name)
 		seq_printf(m, "name:\t%s\n", dmabuf->name);
-	mutex_unlock(&dmabuf->lock);
+	spin_unlock(&dmabuf->name_lock);
 }
 
 static const struct file_operations dma_buf_fops = {
-	.release	= dma_buf_release,
 	.mmap		= dma_buf_mmap_internal,
 	.llseek		= dma_buf_llseek,
 	.poll		= dma_buf_poll,
@@ -506,13 +506,13 @@ err_alloc_file:
 struct dma_buf *dma_buf_export(const struct dma_buf_export_info *exp_info)
 {
 	struct dma_buf *dmabuf;
-	struct reservation_object *resv = exp_info->resv;
+	struct dma_resv *resv = exp_info->resv;
 	struct file *file;
 	size_t alloc_size = sizeof(struct dma_buf);
 	int ret;
 
 	if (!exp_info->resv)
-		alloc_size += sizeof(struct reservation_object);
+		alloc_size += sizeof(struct dma_resv);
 	else
 		/* prevent &dma_buf[1] == dma_buf->resv */
 		alloc_size += 1;
@@ -539,13 +539,14 @@ struct dma_buf *dma_buf_export(const struct dma_buf_export_info *exp_info)
 	dmabuf->size = exp_info->size;
 	dmabuf->exp_name = exp_info->exp_name;
 	dmabuf->owner = exp_info->owner;
+	spin_lock_init(&dmabuf->name_lock);
 	init_waitqueue_head(&dmabuf->poll);
 	dmabuf->cb_excl.poll = dmabuf->cb_shared.poll = &dmabuf->poll;
 	dmabuf->cb_excl.active = dmabuf->cb_shared.active = 0;
 
 	if (!resv) {
-		resv = (struct reservation_object *)&dmabuf[1];
-		reservation_object_init(resv);
+		resv = (struct dma_resv *)&dmabuf[1];
+		dma_resv_init(resv);
 	}
 	dmabuf->resv = resv;
 
@@ -909,11 +910,11 @@ static int __dma_buf_begin_cpu_access(struct dma_buf *dmabuf,
 {
 	bool write = (direction == DMA_BIDIRECTIONAL ||
 		      direction == DMA_TO_DEVICE);
-	struct reservation_object *resv = dmabuf->resv;
+	struct dma_resv *resv = dmabuf->resv;
 	long ret;
 
 	/* Wait on any implicit rendering fences */
-	ret = reservation_object_wait_timeout_rcu(resv, write, true,
+	ret = dma_resv_wait_timeout_rcu(resv, write, true,
 						  MAX_SCHEDULE_TIMEOUT);
 	if (ret < 0)
 		return ret;
@@ -1154,8 +1155,8 @@ static int dma_buf_debug_show(struct seq_file *s, void *unused)
 	int ret;
 	struct dma_buf *buf_obj;
 	struct dma_buf_attachment *attach_obj;
-	struct reservation_object *robj;
-	struct reservation_object_list *fobj;
+	struct dma_resv *robj;
+	struct dma_resv_list *fobj;
 	struct dma_fence *fence;
 	unsigned seq;
 	int count = 0, attach_count, shared_count, i;

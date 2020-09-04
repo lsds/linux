@@ -20,6 +20,7 @@ FILES=                                          \
          test-libbfd-liberty.bin                \
          test-libbfd-liberty-z.bin              \
          test-cplus-demangle.bin                \
+         test-libcap.bin			\
          test-libelf.bin                        \
          test-libelf-getphdrnum.bin             \
          test-libelf-gelf_getnote.bin           \
@@ -69,8 +70,6 @@ FILES=                                          \
 
 FILES := $(addprefix $(OUTPUT),$(FILES))
 
-CC ?= $(CROSS_COMPILE)gcc
-CXX ?= $(CROSS_COMPILE)g++
 PKG_CONFIG ?= $(CROSS_COMPILE)pkg-config
 LLVM_CONFIG ?= llvm-config
 
@@ -104,6 +103,9 @@ $(OUTPUT)test-fortify-source.bin:
 
 $(OUTPUT)test-bionic.bin:
 	$(BUILD)
+
+$(OUTPUT)test-libcap.bin:
+	$(BUILD) -lcap
 
 $(OUTPUT)test-libelf.bin:
 	$(BUILD) -lelf

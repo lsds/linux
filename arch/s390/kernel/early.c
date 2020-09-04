@@ -32,6 +32,21 @@
 #include <asm/boot_data.h>
 #include "entry.h"
 
+static void __init reset_tod_clock(void)
+{
+	u64 time;
+
+	if (store_tod_clock(&time) == 0)
+		return;
+	/* TOD clock not running. Set the clock to Unix Epoch. */
+	if (set_tod_clock(TOD_UNIX_EPOCH) != 0 || store_tod_clock(&time) != 0)
+		disabled_wait();
+
+	memset(tod_clock_base, 0, 16);
+	*(__u64 *) &tod_clock_base[1] = TOD_UNIX_EPOCH;
+	S390_lowcore.last_update_clock = TOD_UNIX_EPOCH;
+}
+
 /*
  * Initialize storage key for kernel pages
  */
@@ -154,6 +169,8 @@ static noinline __init void setup_lowcore_early(void)
 	psw_t psw;
 
 	psw.mask = PSW_MASK_BASE | PSW_DEFAULT_KEY | PSW_MASK_EA | PSW_MASK_BA;
+	if (IS_ENABLED(CONFIG_KASAN))
+		psw.mask |= PSW_MASK_DAT;
 	psw.addr = (unsigned long) s390_base_ext_handler;
 	S390_lowcore.external_new_psw = psw;
 	psw.addr = (unsigned long) s390_base_pgm_handler;
@@ -301,6 +318,7 @@ static void __init check_image_bootable(void)
 
 void __init startup_init(void)
 {
+	reset_tod_clock();
 	check_image_bootable();
 	time_early_init();
 	init_kernel_storage_key();

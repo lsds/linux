@@ -74,7 +74,7 @@ static void int3403_notify(acpi_handle handle,
 						   THERMAL_TRIP_CHANGED);
 		break;
 	default:
-		dev_err(&priv->pdev->dev, "Unsupported event [0x%x]\n", event);
+		dev_dbg(&priv->pdev->dev, "Unsupported event [0x%x]\n", event);
 		break;
 	}
 }
@@ -181,7 +181,7 @@ static int int3403_cdev_add(struct int3403_priv *priv)
 
 	p = buf.pointer;
 	if (!p || (p->type != ACPI_TYPE_PACKAGE)) {
-		printk(KERN_WARNING "Invalid PPSS data\n");
+		pr_warn("Invalid PPSS data\n");
 		kfree(buf.pointer);
 		return -EFAULT;
 	}

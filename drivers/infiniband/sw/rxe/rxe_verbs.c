@@ -69,11 +69,11 @@ static int rxe_query_port(struct ib_device *dev,
 			      &attr->active_width);
 
 	if (attr->state == IB_PORT_ACTIVE)
-		attr->phys_state = RDMA_LINK_PHYS_STATE_LINK_UP;
+		attr->phys_state = IB_PORT_PHYS_STATE_LINK_UP;
 	else if (dev_get_flags(rxe->ndev) & IFF_UP)
-		attr->phys_state = RDMA_LINK_PHYS_STATE_POLLING;
+		attr->phys_state = IB_PORT_PHYS_STATE_POLLING;
 	else
-		attr->phys_state = RDMA_LINK_PHYS_STATE_DISABLED;
+		attr->phys_state = IB_PORT_PHYS_STATE_DISABLED;
 
 	mutex_unlock(&rxe->usdev_lock);
 
@@ -679,6 +679,7 @@ static int rxe_post_send_kernel(struct rxe_qp *qp, const struct ib_send_wr *wr,
 	unsigned int mask;
 	unsigned int length = 0;
 	int i;
+	struct ib_send_wr *next;
 
 	while (wr) {
 		mask = wr_opcode_mask(wr->opcode, qp);
@@ -695,6 +696,8 @@ static int rxe_post_send_kernel(struct rxe_qp *qp, const struct ib_send_wr *wr,
 			break;
 		}
 
+		next = wr->next;
+
 		length = 0;
 		for (i = 0; i < wr->num_sge; i++)
 			length += wr->sg_list[i].length;
@@ -705,7 +708,7 @@ static int rxe_post_send_kernel(struct rxe_qp *qp, const struct ib_send_wr *wr,
 			*bad_wr = wr;
 			break;
 		}
-		wr = wr->next;
+		wr = next;
 	}
 
 	rxe_run_task(&qp->req.task, 1);

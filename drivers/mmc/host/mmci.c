@@ -168,6 +168,8 @@ static struct variant_data variant_ux500 = {
 	.cmdreg_srsp		= MCI_CPSM_RESPONSE,
 	.datalength_bits	= 24,
 	.datactrl_blocksz	= 11,
+	.datactrl_any_blocksz	= true,
+	.dma_power_of_2		= true,
 	.datactrl_mask_sdio	= MCI_DPSM_ST_SDIOEN,
 	.st_sdio		= true,
 	.st_clkdiv		= true,
@@ -201,6 +203,8 @@ static struct variant_data variant_ux500v2 = {
 	.datactrl_mask_ddrmode	= MCI_DPSM_ST_DDRMODE,
 	.datalength_bits	= 24,
 	.datactrl_blocksz	= 11,
+	.datactrl_any_blocksz	= true,
+	.dma_power_of_2		= true,
 	.datactrl_mask_sdio	= MCI_DPSM_ST_SDIOEN,
 	.st_sdio		= true,
 	.st_clkdiv		= true,
@@ -260,6 +264,7 @@ static struct variant_data variant_stm32_sdmmc = {
 	.datacnt_useless	= true,
 	.datalength_bits	= 25,
 	.datactrl_blocksz	= 14,
+	.datactrl_any_blocksz	= true,
 	.stm32_idmabsize_mask	= GENMASK(12, 5),
 	.init			= sdmmc_variant_init,
 };
@@ -279,6 +284,7 @@ static struct variant_data variant_qcom = {
 	.data_cmd_enable	= MCI_CPSM_QCOM_DATCMD,
 	.datalength_bits	= 24,
 	.datactrl_blocksz	= 11,
+	.datactrl_any_blocksz	= true,
 	.pwrreg_powerup		= MCI_PWR_UP,
 	.f_max			= 208000000,
 	.explicit_mclk_control	= true,
@@ -447,10 +453,11 @@ void mmci_dma_setup(struct mmci_host *host)
 static int mmci_validate_data(struct mmci_host *host,
 			      struct mmc_data *data)
 {
+	struct variant_data *variant = host->variant;
+
 	if (!data)
 		return 0;
-
-	if (!is_power_of_2(data->blksz)) {
+	if (!is_power_of_2(data->blksz) && !variant->datactrl_any_blocksz) {
 		dev_err(mmc_dev(host->mmc),
 			"unsupported block size (%d bytes)\n", data->blksz);
 		return -EINVAL;
@@ -515,7 +522,9 @@ int mmci_dma_start(struct mmci_host *host, unsigned int datactrl)
 		 "Submit MMCI DMA job, sglen %d blksz %04x blks %04x flags %08x\n",
 		 data->sg_len, data->blksz, data->blocks, data->flags);
 
-	host->ops->dma_start(host, &datactrl);
+	ret = host->ops->dma_start(host, &datactrl);
+	if (ret)
+		return ret;
 
 	/* Trigger the DMA transfer */
 	mmci_write_datactrlreg(host, datactrl);
@@ -822,6 +831,18 @@ static int _mmci_dmae_prep_data(struct mmci_host *host, struct mmc_data *data,
 	if (data->blksz * data->blocks <= variant->fifosize)
 		return -EINVAL;
 
+	/*
+	 * This is necessary to get SDIO working on the Ux500. We do not yet
+	 * know if this is a bug in:
+	 * - The Ux500 DMA controller (DMA40)
+	 * - The MMCI DMA interface on the Ux500
+	 * some power of two blocks (such as 64 bytes) are sent regularly
+	 * during SDIO traffic and those work fine so for these we enable DMA
+	 * transfers.
+	 */
+	if (host->variant->dma_power_of_2 && !is_power_of_2(data->blksz))
+		return -EINVAL;
+
 	device = chan->device;
 	nr_sg = dma_map_sg(device->dev, data->sg, data->sg_len,
 			   mmc_get_dma_dir(data));
@@ -872,9 +893,14 @@ int mmci_dmae_prep_data(struct mmci_host *host,
 int mmci_dmae_start(struct mmci_host *host, unsigned int *datactrl)
 {
 	struct mmci_dmae_priv *dmae = host->dma_priv;
+	int ret;
 
 	host->dma_in_progress = true;
-	dmaengine_submit(dmae->desc_current);
+	ret = dma_submit_error(dmaengine_submit(dmae->desc_current));
+	if (ret < 0) {
+		host->dma_in_progress = false;
+		return ret;
+	}
 	dma_async_issue_pending(dmae->cur);
 
 	*datactrl |= MCI_DPSM_DMAENABLE;
@@ -1219,47 +1245,58 @@ mmci_cmd_irq(struct mmci_host *host, struct mmc_command *cmd,
 	      (MCI_CMDCRCFAIL|MCI_CMDTIMEOUT|MCI_CMDSENT|MCI_CMDRESPEND)))
 		return;
 
-	/*
-	 * ST Micro variant: handle busy detection.
-	 */
+	/* Handle busy detection on DAT0 if the variant supports it. */
 	if (busy_resp && host->variant->busy_detect) {
 
-		/* We are busy with a command, return */
-		if (host->busy_status &&
-		    (status & host->variant->busy_detect_flag))
-			return;
-
 		/*
-		 * We were not busy, but we now got a busy response on
-		 * something that was not an error, and we double-check
-		 * that the special busy status bit is still set before
-		 * proceeding.
+		 * Before unmasking for the busy end IRQ, confirm that the
+		 * command was sent successfully. To keep track of having a
+		 * command in-progress, waiting for busy signaling to end,
+		 * store the status in host->busy_status.
+		 *
+		 * Note that, the card may need a couple of clock cycles before
+		 * it starts signaling busy on DAT0, hence re-read the
+		 * MMCISTATUS register here, to allow the busy bit to be set.
+		 * Potentially we may even need to poll the register for a
+		 * while, to allow it to be set, but tests indicates that it
+		 * isn't needed.
 		 */
 		if (!host->busy_status &&
 		    !(status & (MCI_CMDCRCFAIL|MCI_CMDTIMEOUT)) &&
 		    (readl(base + MMCISTATUS) & host->variant->busy_detect_flag)) {
 
-			/* Clear the busy start IRQ */
-			writel(host->variant->busy_detect_mask,
-			       host->base + MMCICLEAR);
-
-			/* Unmask the busy end IRQ */
 			writel(readl(base + MMCIMASK0) |
 			       host->variant->busy_detect_mask,
 			       base + MMCIMASK0);
-			/*
-			 * Now cache the last response status code (until
-			 * the busy bit goes low), and return.
-			 */
+
 			host->busy_status =
 				status & (MCI_CMDSENT|MCI_CMDRESPEND);
 			return;
 		}
 
 		/*
-		 * At this point we are not busy with a command, we have
-		 * not received a new busy request, clear and mask the busy
-		 * end IRQ and fall through to process the IRQ.
+		 * If there is a command in-progress that has been successfully
+		 * sent, then bail out if busy status is set and wait for the
+		 * busy end IRQ.
+		 *
+		 * Note that, the HW triggers an IRQ on both edges while
+		 * monitoring DAT0 for busy completion, but there is only one
+		 * status bit in MMCISTATUS for the busy state. Therefore
+		 * both the start and the end interrupts needs to be cleared,
+		 * one after the other. So, clear the busy start IRQ here.
+		 */
+		if (host->busy_status &&
+		    (status & host->variant->busy_detect_flag)) {
+			writel(host->variant->busy_detect_mask,
+			       host->base + MMCICLEAR);
+			return;
+		}
+
+		/*
+		 * If there is a command in-progress that has been successfully
+		 * sent and the busy bit isn't set, it means we have received
+		 * the busy end IRQ. Clear and mask the IRQ, then continue to
+		 * process the command.
 		 */
 		if (host->busy_status) {
 
@@ -1505,14 +1542,8 @@ static irqreturn_t mmci_irq(int irq, void *dev_id)
 		}
 
 		/*
-		 * We intentionally clear the MCI_ST_CARDBUSY IRQ (if it's
-		 * enabled) in mmci_cmd_irq() function where ST Micro busy
-		 * detection variant is handled. Considering the HW seems to be
-		 * triggering the IRQ on both edges while monitoring DAT0 for
-		 * busy completion and that same status bit is used to monitor
-		 * start and end of busy detection, special care must be taken
-		 * to make sure that both start and end interrupts are always
-		 * cleared one after the other.
+		 * Busy detection is managed by mmci_cmd_irq(), including to
+		 * clear the corresponding IRQ.
 		 */
 		status &= readl(host->base + MMCIMASK0);
 		if (host->variant->busy_detect)

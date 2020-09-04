@@ -3,7 +3,6 @@
 #define __ASM_POINTER_AUTH_H
 
 #include <linux/bitops.h>
-#include <linux/random.h>
 
 #include <asm/cpufeature.h>
 #include <asm/memory.h>
@@ -29,6 +28,13 @@ struct ptrauth_keys {
 	struct ptrauth_key apdb;
 	struct ptrauth_key apga;
 };
+
+/*
+ * Only include random.h once ptrauth_keys_* structures are defined
+ * to avoid yet another circular include hell (random.h * ends up
+ * including asm/smp.h, which requires ptrauth_keys_kernel).
+ */
+#include <linux/random.h>
 
 static inline void ptrauth_keys_init(struct ptrauth_keys *keys)
 {
@@ -69,7 +75,7 @@ extern int ptrauth_prctl_reset_keys(struct task_struct *tsk, unsigned long arg);
  * The EL0 pointer bits used by a pointer authentication code.
  * This is dependent on TBI0 being enabled, or bits 63:56 would also apply.
  */
-#define ptrauth_user_pac_mask()	GENMASK(54, vabits_user)
+#define ptrauth_user_pac_mask()	GENMASK(54, vabits_actual)
 
 /* Only valid for EL0 TTBR0 instruction pointers */
 static inline unsigned long ptrauth_strip_insn_pac(unsigned long ptr)

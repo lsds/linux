@@ -647,10 +647,10 @@ static int rocker_dma_rings_init(struct rocker *rocker)
 err_dma_event_ring_bufs_alloc:
 	rocker_dma_ring_destroy(rocker, &rocker->event_ring);
 err_dma_event_ring_create:
+	rocker_dma_cmd_ring_waits_free(rocker);
+err_dma_cmd_ring_waits_alloc:
 	rocker_dma_ring_bufs_free(rocker, &rocker->cmd_ring,
 				  PCI_DMA_BIDIRECTIONAL);
-err_dma_cmd_ring_waits_alloc:
-	rocker_dma_cmd_ring_waits_free(rocker);
 err_dma_cmd_ring_bufs_alloc:
 	rocker_dma_ring_destroy(rocker, &rocker->cmd_ring);
 	return err;
@@ -2188,6 +2188,9 @@ static int rocker_router_fib_event(struct notifier_block *nb,
 	struct rocker *rocker = container_of(nb, struct rocker, fib_nb);
 	struct rocker_fib_event_work *fib_work;
 	struct fib_notifier_info *info = ptr;
+
+	if (!net_eq(info->net, &init_net))
+		return NOTIFY_DONE;
 
 	if (info->family != AF_INET)
 		return NOTIFY_DONE;

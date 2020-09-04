@@ -98,7 +98,7 @@
 #define I2C_STAT_DAT_REQ	BIT(25)
 #define I2C_STAT_CMD_COMP	BIT(24)
 #define I2C_STAT_STOP_ERR	BIT(23)
-#define I2C_STAT_MAX_PORT	GENMASK(19, 16)
+#define I2C_STAT_MAX_PORT	GENMASK(22, 16)
 #define I2C_STAT_ANY_INT	BIT(15)
 #define I2C_STAT_SCL_IN		BIT(11)
 #define I2C_STAT_SDA_IN		BIT(10)
@@ -707,8 +707,10 @@ static int fsi_i2c_probe(struct device *dev)
 			continue;
 
 		port = kzalloc(sizeof(*port), GFP_KERNEL);
-		if (!port)
+		if (!port) {
+			of_node_put(np);
 			break;
+		}
 
 		port->master = i2c;
 		port->port = port_no;

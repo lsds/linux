@@ -18,6 +18,8 @@ Kernel Build System
     headers_install
 
     issues
+    reproducible-builds
+    llvm
 
 .. only::  subproject and html
 

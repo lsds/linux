@@ -849,6 +849,12 @@ struct drm_mode_config {
 	 */
 	struct drm_property *content_protection_property;
 
+	/**
+	 * @hdcp_content_type_property: DRM ENUM property for type of
+	 * Protected Content.
+	 */
+	struct drm_property *hdcp_content_type_property;
+
 	/* dumb ioctl parameters */
 	uint32_t preferred_depth, prefer_shadow;
 
@@ -858,6 +864,18 @@ struct drm_mode_config {
 	 * Hint to framebuffer emulation to prefer shadow-fb rendering.
 	 */
 	bool prefer_shadow_fbdev;
+
+	/**
+	 * @fbdev_use_iomem:
+	 *
+	 * Set to true if framebuffer reside in iomem.
+	 * When set to true memcpy_toio() is used when copying the framebuffer in
+	 * drm_fb_helper.drm_fb_helper_dirty_blit_real().
+	 *
+	 * FIXME: This should be replaced with a per-mapping is_iomem
+	 * flag (like ttm does), and then used everywhere in fbdev code.
+	 */
+	bool fbdev_use_iomem;
 
 	/**
 	 * @quirk_addfb_prefer_xbgr_30bpp:

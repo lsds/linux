@@ -512,6 +512,19 @@ ipv6_fcnal_runtime()
 	run_cmd "$IP nexthop add id 86 via 2001:db8:91::2 dev veth1"
 	run_cmd "$IP ro add 2001:db8:101::1/128 nhid 81"
 
+	# rpfilter and default route
+	$IP nexthop flush >/dev/null 2>&1
+	run_cmd "ip netns exec me ip6tables -t mangle -I PREROUTING 1 -m rpfilter --invert -j DROP"
+	run_cmd "$IP nexthop add id 91 via 2001:db8:91::2 dev veth1"
+	run_cmd "$IP nexthop add id 92 via 2001:db8:92::2 dev veth3"
+	run_cmd "$IP nexthop add id 93 group 91/92"
+	run_cmd "$IP -6 ro add default nhid 91"
+	run_cmd "ip netns exec me ping -c1 -w1 2001:db8:101::1"
+	log_test $? 0 "Nexthop with default route and rpfilter"
+	run_cmd "$IP -6 ro replace default nhid 93"
+	run_cmd "ip netns exec me ping -c1 -w1 2001:db8:101::1"
+	log_test $? 0 "Nexthop with multipath default route and rpfilter"
+
 	# TO-DO:
 	# existing route with old nexthop; append route with new nexthop
 	# existing route with old nexthop; replace route with new
@@ -749,6 +762,29 @@ ipv4_fcnal_runtime()
 	run_cmd "ip netns exec me ping -c1 -w1 172.16.101.1"
 	log_test $? 0 "Ping - multipath"
 
+	run_cmd "$IP ro delete 172.16.101.1/32 nhid 122"
+
+	#
+	# multiple default routes
+	# - tests fib_select_default
+	run_cmd "$IP nexthop add id 501 via 172.16.1.2 dev veth1"
+	run_cmd "$IP ro add default nhid 501"
+	run_cmd "$IP ro add default via 172.16.1.3 dev veth1 metric 20"
+	run_cmd "ip netns exec me ping -c1 -w1 172.16.101.1"
+	log_test $? 0 "Ping - multiple default routes, nh first"
+
+	# flip the order
+	run_cmd "$IP ro del default nhid 501"
+	run_cmd "$IP ro del default via 172.16.1.3 dev veth1 metric 20"
+	run_cmd "$IP ro add default via 172.16.1.2 dev veth1 metric 20"
+	run_cmd "$IP nexthop replace id 501 via 172.16.1.3 dev veth1"
+	run_cmd "$IP ro add default nhid 501 metric 20"
+	run_cmd "ip netns exec me ping -c1 -w1 172.16.101.1"
+	log_test $? 0 "Ping - multiple default routes, nh second"
+
+	run_cmd "$IP nexthop delete nhid 501"
+	run_cmd "$IP ro del default"
+
 	#
 	# IPv4 with blackhole nexthops
 	#
@@ -939,6 +975,20 @@ basic()
 	# nexthop group with other attributes fail
 	run_cmd "$IP nexthop add id 104 group 1 dev veth1"
 	log_test $? 2 "Nexthop group and device"
+
+	# Tests to ensure that flushing works as expected.
+	run_cmd "$IP nexthop add id 105 blackhole proto 99"
+	run_cmd "$IP nexthop add id 106 blackhole proto 100"
+	run_cmd "$IP nexthop add id 107 blackhole proto 99"
+	run_cmd "$IP nexthop flush proto 99"
+	check_nexthop "id 105" ""
+	check_nexthop "id 106" "id 106 blackhole proto 100"
+	check_nexthop "id 107" ""
+	run_cmd "$IP nexthop flush proto 100"
+	check_nexthop "id 106" ""
+
+	run_cmd "$IP nexthop flush proto 100"
+	log_test $? 0 "Test proto flush"
 
 	run_cmd "$IP nexthop add id 104 group 1 blackhole"
 	log_test $? 2 "Nexthop group and blackhole"

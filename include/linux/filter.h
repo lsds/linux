@@ -749,14 +749,14 @@ bpf_ctx_narrow_access_ok(u32 off, u32 size, u32 size_default)
 }
 
 static inline u8
-bpf_ctx_narrow_load_shift(u32 off, u32 size, u32 size_default)
+bpf_ctx_narrow_access_offset(u32 off, u32 size, u32 size_default)
 {
-	u8 load_off = off & (size_default - 1);
+	u8 access_off = off & (size_default - 1);
 
 #ifdef __LITTLE_ENDIAN
-	return load_off * 8;
+	return access_off;
 #else
-	return (size_default - (load_off + size)) * 8;
+	return size_default - (access_off + size);
 #endif
 }
 
@@ -770,8 +770,12 @@ bpf_ctx_narrow_load_shift(u32 off, u32 size, u32 size_default)
 
 static inline void bpf_prog_lock_ro(struct bpf_prog *fp)
 {
-	set_vm_flush_reset_perms(fp);
-	set_memory_ro((unsigned long)fp, fp->pages);
+#ifndef CONFIG_BPF_JIT_ALWAYS_ON
+	if (!fp->jited) {
+		set_vm_flush_reset_perms(fp);
+		set_memory_ro((unsigned long)fp, fp->pages);
+	}
+#endif
 }
 
 static inline void bpf_jit_binary_lock_ro(struct bpf_binary_header *hdr)
@@ -849,12 +853,12 @@ void bpf_jit_compile(struct bpf_prog *prog);
 bool bpf_jit_needs_zext(void);
 bool bpf_helper_changes_pkt_data(void *func);
 
-static inline bool bpf_dump_raw_ok(void)
+static inline bool bpf_dump_raw_ok(const struct cred *cred)
 {
 	/* Reconstruction of call-sites is dependent on kallsyms,
 	 * thus make dump the same restriction.
 	 */
-	return kallsyms_show_value() == 1;
+	return kallsyms_show_value(cred);
 }
 
 struct bpf_prog *bpf_patch_insn_single(struct bpf_prog *prog, u32 off,
@@ -1099,7 +1103,6 @@ static inline void bpf_get_prog_name(const struct bpf_prog *prog, char *sym)
 
 #endif /* CONFIG_BPF_JIT */
 
-void bpf_prog_kallsyms_del_subprogs(struct bpf_prog *fp);
 void bpf_prog_kallsyms_del_all(struct bpf_prog *fp);
 
 #define BPF_ANC		BIT(15)

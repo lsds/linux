@@ -625,6 +625,8 @@ static int rv3028_probe(struct i2c_client *client)
 		return -ENOMEM;
 
 	rv3028->regmap = devm_regmap_init_i2c(client, &regmap_config);
+	if (IS_ERR(rv3028->regmap))
+		return PTR_ERR(rv3028->regmap);
 
 	i2c_set_clientdata(client, rv3028);
 
@@ -639,9 +641,8 @@ static int rv3028_probe(struct i2c_client *client)
 		dev_warn(&client->dev, "An alarm may have been missed.\n");
 
 	rv3028->rtc = devm_rtc_allocate_device(&client->dev);
-	if (IS_ERR(rv3028->rtc)) {
+	if (IS_ERR(rv3028->rtc))
 		return PTR_ERR(rv3028->rtc);
-	}
 
 	if (client->irq > 0) {
 		ret = devm_request_threaded_irq(&client->dev, client->irq,

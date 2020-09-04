@@ -689,6 +689,12 @@ static void ocfs2_nfs_sync_lock_res_init(struct ocfs2_lock_res *res,
 				   &ocfs2_nfs_sync_lops, osb);
 }
 
+static void ocfs2_nfs_sync_lock_init(struct ocfs2_super *osb)
+{
+	ocfs2_nfs_sync_lock_res_init(&osb->osb_nfs_sync_lockres, osb);
+	init_rwsem(&osb->nfs_sync_rwlock);
+}
+
 void ocfs2_trim_fs_lock_res_init(struct ocfs2_super *osb)
 {
 	struct ocfs2_lock_res *lockres = &osb->osb_trim_fs_lockres;
@@ -2508,9 +2514,7 @@ bail:
 			ocfs2_inode_unlock(inode, ex);
 	}
 
-	if (local_bh)
-		brelse(local_bh);
-
+	brelse(local_bh);
 	return status;
 }
 
@@ -2593,8 +2597,7 @@ int ocfs2_inode_lock_atime(struct inode *inode,
 		*level = 1;
 		if (ocfs2_should_update_atime(inode, vfsmnt))
 			ocfs2_update_inode_atime(inode, bh);
-		if (bh)
-			brelse(bh);
+		brelse(bh);
 	} else
 		*level = 0;
 
@@ -2858,13 +2861,24 @@ int ocfs2_nfs_sync_lock(struct ocfs2_super *osb, int ex)
 	if (ocfs2_is_hard_readonly(osb))
 		return -EROFS;
 
+	if (ex)
+		down_write(&osb->nfs_sync_rwlock);
+	else
+		down_read(&osb->nfs_sync_rwlock);
+
 	if (ocfs2_mount_local(osb))
 		return 0;
 
 	status = ocfs2_cluster_lock(osb, lockres, ex ? LKM_EXMODE : LKM_PRMODE,
 				    0, 0);
-	if (status < 0)
+	if (status < 0) {
 		mlog(ML_ERROR, "lock on nfs sync lock failed %d\n", status);
+
+		if (ex)
+			up_write(&osb->nfs_sync_rwlock);
+		else
+			up_read(&osb->nfs_sync_rwlock);
+	}
 
 	return status;
 }
@@ -2876,6 +2890,10 @@ void ocfs2_nfs_sync_unlock(struct ocfs2_super *osb, int ex)
 	if (!ocfs2_mount_local(osb))
 		ocfs2_cluster_unlock(osb, lockres,
 				     ex ? LKM_EXMODE : LKM_PRMODE);
+	if (ex)
+		up_write(&osb->nfs_sync_rwlock);
+	else
+		up_read(&osb->nfs_sync_rwlock);
 }
 
 int ocfs2_trim_fs_lock(struct ocfs2_super *osb,
@@ -3012,8 +3030,6 @@ struct ocfs2_dlm_debug *ocfs2_new_dlm_debug(void)
 
 	kref_init(&dlm_debug->d_refcnt);
 	INIT_LIST_HEAD(&dlm_debug->d_lockres_tracking);
-	dlm_debug->d_locking_state = NULL;
-	dlm_debug->d_locking_filter = NULL;
 	dlm_debug->d_filter_secs = 0;
 out:
 	return dlm_debug;
@@ -3282,27 +3298,20 @@ static void ocfs2_dlm_init_debug(struct ocfs2_super *osb)
 {
 	struct ocfs2_dlm_debug *dlm_debug = osb->osb_dlm_debug;
 
-	dlm_debug->d_locking_state = debugfs_create_file("locking_state",
-							 S_IFREG|S_IRUSR,
-							 osb->osb_debug_root,
-							 osb,
-							 &ocfs2_dlm_debug_fops);
+	debugfs_create_file("locking_state", S_IFREG|S_IRUSR,
+			    osb->osb_debug_root, osb, &ocfs2_dlm_debug_fops);
 
-	dlm_debug->d_locking_filter = debugfs_create_u32("locking_filter",
-						0600,
-						osb->osb_debug_root,
-						&dlm_debug->d_filter_secs);
+	debugfs_create_u32("locking_filter", 0600, osb->osb_debug_root,
+			   &dlm_debug->d_filter_secs);
+	ocfs2_get_dlm_debug(dlm_debug);
 }
 
 static void ocfs2_dlm_shutdown_debug(struct ocfs2_super *osb)
 {
 	struct ocfs2_dlm_debug *dlm_debug = osb->osb_dlm_debug;
 
-	if (dlm_debug) {
-		debugfs_remove(dlm_debug->d_locking_state);
-		debugfs_remove(dlm_debug->d_locking_filter);
+	if (dlm_debug)
 		ocfs2_put_dlm_debug(dlm_debug);
-	}
 }
 
 int ocfs2_dlm_init(struct ocfs2_super *osb)
@@ -3352,7 +3361,7 @@ int ocfs2_dlm_init(struct ocfs2_super *osb)
 local:
 	ocfs2_super_lock_res_init(&osb->osb_super_lockres, osb);
 	ocfs2_rename_lock_res_init(&osb->osb_rename_lockres, osb);
-	ocfs2_nfs_sync_lock_res_init(&osb->osb_nfs_sync_lockres, osb);
+	ocfs2_nfs_sync_lock_init(osb);
 	ocfs2_orphan_scan_lock_res_init(&osb->osb_orphan_scan.os_lockres, osb);
 
 	osb->cconn = conn;

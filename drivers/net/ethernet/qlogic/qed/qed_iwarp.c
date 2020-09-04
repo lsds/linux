@@ -382,7 +382,7 @@ qed_iwarp2roce_state(enum qed_iwarp_qp_state state)
 	}
 }
 
-const static char *iwarp_state_names[] = {
+static const char * const iwarp_state_names[] = {
 	"IDLE",
 	"RTS",
 	"TERMINATE",
@@ -2831,8 +2831,6 @@ int qed_iwarp_stop(struct qed_hwfn *p_hwfn)
 	rc = qed_iwarp_wait_for_all_cids(p_hwfn);
 	if (rc)
 		return rc;
-
-	qed_spq_unregister_async_cb(p_hwfn, PROTOCOLID_IWARP);
 
 	return qed_iwarp_ll2_stop(p_hwfn);
 }
