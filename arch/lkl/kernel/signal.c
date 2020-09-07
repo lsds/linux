@@ -81,6 +81,76 @@ static void handle_signal(struct ksignal *ksig, struct ucontext *uctx)
     /* take back the lock */
 	lkl_cpu_get();
 }
+/*
+    return only the signal of a given number, while snipping it from the list
+    Used by the trap handler for sync signals such as SEGV, FPE.
+*/
+
+int get_given_ksignal(struct thread_info *task, struct ksignal* sig, int which)
+{
+    struct ksignal_list_node *next;
+    struct ksignal_list_node *node;
+    struct ksignal_list_node *previous;
+
+    spin_lock(&task->signal_list_lock);
+    node = task->signal_list_head;
+    previous = NULL;
+
+    while (node != NULL) {
+        next = node->next;
+        if (node->sig.sig == which) { 
+            printk("Found sig %d at %p\n", which, node);
+           /* first remove the node we found from the linked list */
+           
+            if (previous != NULL) // not at the front?
+                previous->next = next;
+            else
+                task->signal_list_head = next;
+
+            if (next == NULL)                       // was that the last node?
+                task->signal_list_tail = previous;  // yes, have the tail point at the previous or be null 
+
+            spin_unlock(&task->signal_list_lock);
+            memcpy(sig, &node->sig, sizeof(*sig)); // copy the signal back to the caller
+            LKL_TRACE("Fetching task %p signal %d\n", current, sig->sig);
+            kfree(node);
+            return 1;
+        }
+        previous = node;
+        node = next;
+    }
+    
+    spin_unlock(&task->signal_list_lock);
+    return 0;
+}  
+
+int get_next_ksignal(struct thread_info *task, struct ksignal* sig)
+{
+    struct ksignal_list_node *next;
+    struct ksignal_list_node *node;
+
+    spin_lock(&task->signal_list_lock);
+    node = task->signal_list_head;
+
+    if (!node) {
+        spin_unlock(&task->signal_list_lock);
+        return 0; // no pending signals
+    }
+
+    next = node->next;
+    task->signal_list_head = next;      // drop the head
+    if (next == NULL)                   // was that the last node?
+        task->signal_list_tail = NULL;  // if so there is now no tail
+        
+    
+    spin_unlock(&task->signal_list_lock);
+    
+    memcpy(sig, &node->sig, sizeof(*sig)); // copy the signal back to the caller
+    LKL_TRACE("Fetching task %p signal %d\n", current, sig->sig);
+    kfree(node);
+    return 1;
+}    
+
 
 /*
     While you might think this should call move_signals_to_task, send_current_signals
@@ -104,11 +174,15 @@ void lkl_process_trap(int signr, struct ucontext *uctx)
         lkl_bug("%s expected the cpu to be locked\n", __func__);
 
     LKL_TRACE("enter\n");
-
-/* TODO - use a scheme like/refactored from the async signal case ie move/send */
-    while (get_signal(&ksig)) {
+#if 1
+    move_signals_to_task(); // capture and queue pending signals and traps        
+    
+    // walk the list and find the first one of the type we expect
+    while (get_given_ksignal(task_thread_info(current), &ksig, signr)) {
+#else
+    while (get_signal(&ksig)) { // will through away other pending signals
+#endif
         LKL_TRACE("ksig.sig=%d", ksig.sig);
-        printk("trap ksig.sig=%d", ksig.sig);
 
         /* Handle required signal */
         if(signr == ksig.sig)
@@ -117,7 +191,10 @@ void lkl_process_trap(int signr, struct ucontext *uctx)
             printk("trap task %p %d\n", current, signr);
             handle_signal(&ksig, uctx);
             break;
+        } else {
+            printk("discarded ksig.sig=%d", ksig.sig);
         }
+        
     }
 }
 
@@ -126,7 +203,7 @@ void lkl_process_trap(int signr, struct ucontext *uctx)
    if there were no nodes before then bot head and tail point at this one node
 */
 
-static void append_ksignal_node(struct thread_info *task, struct ksignal_list_node* node)
+void append_ksignal_node(struct thread_info *task, struct ksignal_list_node* node)
 {
     struct ksignal_list_node *ptr;
     spin_lock(&task->signal_list_lock);
@@ -166,32 +243,7 @@ void move_signals_to_task(void)
     lkl_cpu_put();
 }
 
-static int get_next_ksignal(struct thread_info *task, struct ksignal* sig)
-{
-    struct ksignal_list_node *next;
-    struct ksignal_list_node *node;
 
-    spin_lock(&task->signal_list_lock);
-    node = task->signal_list_head;
-
-    if (!node) {
-        spin_unlock(&task->signal_list_lock);
-        return 0; // no pending signals
-    }
-
-    next = node->next;
-    task->signal_list_head = next;      // drop the head
-    if (next == NULL)                   // was that the last node?
-        task->signal_list_tail = NULL;  // if so there is now no tail
-        
-    
-    spin_unlock(&task->signal_list_lock);
-    
-    memcpy(sig, &node->sig, sizeof(*sig)); // copy the signal back to the caller
-    LKL_TRACE("Fetching task %p signal %d\n", current, sig->sig);
-    kfree(node);
-    return 1;
-}    
 
 /*
     Must be called WITH the cpu lock held.
