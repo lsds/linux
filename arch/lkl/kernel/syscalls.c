@@ -337,12 +337,16 @@ static int idle_host_task_loop(void *unused)
 	idle_host_task = current;
 
 	for (;;) {
-		// any pending signals, capture them in lists per task
-		// so we can send them to the appropriate task later
+		/*
+			any pending signals, capture them in lists per task
+			so we can send them to the appropriate task later
+		*/
 		move_signals_to_task();
-		// I am not convinced any signas are ever available here
-		// if the send at the end of lkl_syscall is removed nothing
-		// arrives in my test case
+		/*
+			I am not convinced any signas are ever available here
+			if the send at the end of lkl_syscall is removed nothing
+			arrives in my test case
+		*/
 		send_current_signals(NULL);
 
 		/* Really? */

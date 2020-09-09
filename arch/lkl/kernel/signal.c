@@ -103,16 +103,16 @@ int get_given_ksignal(struct thread_info *task, struct ksignal* sig, int which)
         if (node->sig.sig == which) { 
            /* first remove the node we found from the linked list */
            
-            if (previous != NULL) // not at the front?
+            if (previous != NULL) /* not at the front? */
                 previous->next = next;
             else
                 task->signal_list_head = next;
 
-            if (next == NULL)                       // was that the last node?
-                task->signal_list_tail = previous;  // yes, have the tail point at the previous or be null 
+            if (next == NULL)                       /* was that the last node? */
+                task->signal_list_tail = previous;  /* yes, have the tail point at the previous or be null */
 
             spin_unlock(&task->signal_list_lock);
-            memcpy(sig, &node->sig, sizeof(*sig)); // copy the signal back to the caller
+            memcpy(sig, &node->sig, sizeof(*sig));  /* copy the signal back to the caller */
             LKL_TRACE("Fetching task %p signal %d\n", current, sig->sig);
             kfree(node);
             return 1;
@@ -135,18 +135,18 @@ int get_next_ksignal(struct thread_info *task, struct ksignal* sig)
 
     if (!node) {
         spin_unlock(&task->signal_list_lock);
-        return 0; // no pending signals
+        return 0; /* no pending signals */
     }
 
     next = node->next;
-    task->signal_list_head = next;      // drop the head
-    if (next == NULL)                   // was that the last node?
-        task->signal_list_tail = NULL;  // if so there is now no tail
+    task->signal_list_head = next;      /* drop the head */
+    if (next == NULL)                   /* was that the last node? */
+        task->signal_list_tail = NULL;  /* if so there is now no tail */
         
     
     spin_unlock(&task->signal_list_lock);
     
-    memcpy(sig, &node->sig, sizeof(*sig)); // copy the signal back to the caller
+    memcpy(sig, &node->sig, sizeof(*sig)); /* copy the signal back to the caller */
     LKL_TRACE("Fetching task %p signal %d\n", current, sig->sig);
     kfree(node);
     return 1;
@@ -205,27 +205,42 @@ void lkl_process_trap(int signr, struct ucontext *uctx)
    if there were no nodes before then bot head and tail point at this one node
 */
 
-void append_ksignal_node(struct thread_info *task, struct ksignal_list_node* node)
+void append_ksignal_node(struct thread_info *task, struct ksignal *ksig)
 {
     struct ksignal_list_node *ptr;
+    
+    /* first make a place to hold our signal */
+    struct ksignal_list_node *node = kmalloc(sizeof(struct ksignal_list_node), GFP_ATOMIC);     
+    if (node == NULL) {
+        lkl_bug("Unable to allocate memory to hold signal state.");
+    }
+    memcpy(&node->sig, ksig, sizeof(*ksig));
+    node->next = NULL;
+
+    /* now put it in the linked list */
     spin_lock(&task->signal_list_lock);
     ptr = task->signal_list_tail;
-    if (ptr == NULL) { // list is empty
+    if (ptr == NULL) { /* list is empty so point both head and tail at the given node */
         task->signal_list_head = node;
         task->signal_list_tail = node;
-    } else {
-        ptr->next = node;
+    } else { /* otherwise just the tail changes */
+        ptr->next = node; 
     }
 
     spin_unlock(&task->signal_list_lock);
 }    
 
-// Must be called with the cpu lock held
+/*
+    Must be called with the cpu lock held
+*/
+
 void move_signals_to_task(void)
 {
-    struct ksignal ksig;    // place to hold retrieved signal
-    // get the lkl local version of the current task, so we can store the signals
-    // in a list hanging off it.
+    struct ksignal ksig;    /* place to hold retrieved signal */
+    /*
+        get the lkl local version of the current task, so we can store the signals
+        in a list hanging off it.
+    */
     struct thread_info *current_task;
 
 #ifdef DEBUG
@@ -234,16 +249,11 @@ void move_signals_to_task(void)
         lkl_bug("%s called without cpu lock\n", __funct__);
 #endif
     current_task = task_thread_info(current); 
-    // note that get_signal may never return if the task is dead (eg pending a SIGKILL)
+    /* note that get_signal may never return if the task is dead (eg pending a SIGKILL) */
     while (get_signal(&ksig)) {
-    	struct ksignal_list_node* node = kmalloc(sizeof(struct ksignal_list_node), GFP_KERNEL); // may sleep, is that ok?       
-        if (node == NULL) {
-            lkl_bug("Unable to allocate memory to hold signal state.");
-        }
+    	
         LKL_TRACE("Appending task %p signal %d\n", current, ksig.sig);
-        memcpy(&node->sig, &ksig, sizeof(ksig));
-        node->next = NULL;
-        append_ksignal_node(current_task, node);
+        append_ksignal_node(current_task, &ksig);
     }
 }
 
