@@ -136,7 +136,9 @@ int lkl_is_running(void)
 
 void machine_halt(void)
 {
+	/* all this does is set cpu.shutdown_gate to MAX_THREADS as some sort of flag */
 	lkl_cpu_shutdown();
+	/* so this return path IS taken */ 
 }
 
 void machine_power_off(void)
@@ -156,6 +158,12 @@ long lkl_sys_halt(void)
 		LINUX_REBOOT_MAGIC2, LINUX_REBOOT_CMD_RESTART, };
 
 	err = lkl_syscall(__NR_reboot, params);
+
+	/*
+		This code does get run even though machine_halt (above)
+		is called.
+	*/
+
 	if (err < 0) {
 		LKL_TRACE("sys_reboot failed (err=%i)\n", err);
 		return err;

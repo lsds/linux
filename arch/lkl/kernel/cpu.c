@@ -39,6 +39,7 @@ struct lkl_cpu {
 	 * requesting CPU access.
 	 */
 	#define MAX_THREADS 1000000
+	/* This field seems to be both a count AND a flag which is indicated by adding MAX_THREADS in a convoluted way */
 	unsigned int shutdown_gate;
 	bool irqs_pending;
 	/* no of threads waiting the CPU */
@@ -86,8 +87,12 @@ static void __cpu_try_get_unlock(int lock_ret, int n)
 void lkl_cpu_change_owner(lkl_thread_t owner)
 {
 	lkl_ops->mutex_lock(cpu.lock);
-	if (cpu.count > 1)
+	if (cpu.count > 1) {
+#ifdef DEBUG
+		lkl_print_cpu_state(__func__);
+#endif
 		lkl_bug("bad count while changing owner\n");
+	}
 	cpu.owner = owner;
 	lkl_ops->mutex_unlock(cpu.lock);
 }
@@ -116,40 +121,98 @@ void lkl_cpu_put(void)
 {
 	lkl_ops->mutex_lock(cpu.lock);
 
-	if (!cpu.count || !cpu.owner ||
-	    !lkl_ops->thread_equal(cpu.owner, lkl_ops->thread_self()))
-		lkl_bug("%s: unbalanced put\n", __func__);
+	/*
+		lkl_cpu_get is a nop when the 'shutdown gate' is set
+		so, experimentally, do nothing in that case.
+	*/
 
-	while (cpu.irqs_pending && !irqs_disabled()) {
-		cpu.irqs_pending = false;
-		lkl_ops->mutex_unlock(cpu.lock);
-		run_irqs();
-		lkl_ops->mutex_lock(cpu.lock);
+	if (cpu.shutdown_gate < MAX_THREADS) {
+		if (!cpu.count || !cpu.owner ||
+			!lkl_ops->thread_equal(cpu.owner, lkl_ops->thread_self())) {
+#ifdef DEBUG
+			lkl_print_cpu_state(__func__);
+#endif
+			lkl_bug("%s: unbalanced put\n", __func__);
+		}
+
+		while (cpu.irqs_pending && !irqs_disabled()) {
+			cpu.irqs_pending = false;
+			lkl_ops->mutex_unlock(cpu.lock);
+			run_irqs();
+			lkl_ops->mutex_lock(cpu.lock);
+		}
+
+		if (test_ti_thread_flag(current_thread_info(), TIF_HOST_THREAD) &&
+			!single_task_running() && cpu.count == 1) {
+			if (in_interrupt()) {
+#ifdef DEBUG
+				lkl_print_cpu_state(__func__);
+#endif
+				lkl_bug("%s: in interrupt\n", __func__);
+			}
+			lkl_ops->mutex_unlock(cpu.lock);
+			thread_sched_jb();
+			return;
+		}
+
+		if (--cpu.count > 0) {
+			lkl_ops->mutex_unlock(cpu.lock);
+			return;
+		}
+
+		if (cpu.sleepers) {
+			lkl_ops->sem_up(cpu.sem);
+		}
+
+		cpu.owner = 0;
+	/*
+		Advice is that you should not attempt to use the locking mechanism
+		once the shutdown in underway, so lkl_bug in that case.
+	*/
+	} else {
+#ifdef DEBUG
+		lkl_print_cpu_state(__func__);
+#endif
+		lkl_bug("using lkl_cpu_put after shutdown");
 	}
-
-	if (test_ti_thread_flag(current_thread_info(), TIF_HOST_THREAD) &&
-	    !single_task_running() && cpu.count == 1) {
-		if (in_interrupt())
-			lkl_bug("%s: in interrupt\n", __func__);
-		lkl_ops->mutex_unlock(cpu.lock);
-		thread_sched_jb();
-		return;
-	}
-
-	if (--cpu.count > 0) {
-		lkl_ops->mutex_unlock(cpu.lock);
-		return;
-	}
-
-	if (cpu.sleepers) {
-		lkl_ops->sem_up(cpu.sem);
-	}
-
-	cpu.owner = 0;
 
 	lkl_ops->mutex_unlock(cpu.lock);
 }
 
+#ifdef DEBUG
+
+/* Probably only ever to be a debug tool. Essentially allows for assert(cpuLockTaken); */
+
+int lkl_check_cpu_owner()
+{
+	int result;
+	lkl_ops->mutex_lock(cpu.lock);
+	lkl_thread_t self = lkl_ops->thread_self();
+	lkl_thread_t owner = cpu.owner;
+	if (!cpu.count || !owner ||
+	    !lkl_ops->thread_equal(owner, self)) {
+		result = 0;
+	} else {
+		result = 1;
+	}
+	lkl_ops->mutex_unlock(cpu.lock);
+	return result.
+}
+
+/* debugging */
+
+void lkl_print_cpu_state(const char *func_name)
+{	
+	lkl_thread_t self = lkl_ops->thread_self();
+	lkl_thread_t owner = cpu.owner;
+	unsigned int count = cpu.count;
+	unsigned int sleepers = cpu.sleepers;
+	unsigned int shutdown_gate = cpu.shutdown_gate;
+
+	printk("%s: self %lx owner %lx count %u sleepers %u shutdown gate %u\n", func_name, self, owner, count, sleepers, shutdown_gate);
+}
+#endif
+	
 int lkl_cpu_try_run_irq(int irq)
 {
 	int ret;
