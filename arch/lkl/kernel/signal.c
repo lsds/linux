@@ -101,7 +101,6 @@ int get_given_ksignal(struct thread_info *task, struct ksignal* sig, int which)
     while (node != NULL) {
         next = node->next;
         if (node->sig.sig == which) { 
-            printk("Found sig %d at %p\n", which, node);
            /* first remove the node we found from the linked list */
            
             if (previous != NULL) // not at the front?
