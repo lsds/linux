@@ -5,8 +5,6 @@
 #include <asm/cpu.h>
 #include <asm/host_ops.h>
 
-/* Disable temporary test prints - will be removed completely before the PR is merged but are of use now.*/
-#define VERBOSE 0
 
 static void initialize_uctx(struct ucontext *uctx, const struct pt_regs *regs)
 {
@@ -53,9 +51,6 @@ static void handle_signal(struct ksignal *ksig, struct ucontext *uctx)
     if (haveLock == 0)
         lkl_bug("%s called without cpu lock\n", __funct__);
 #endif
-
-    if (VERBOSE && ksig->sig != SIGUSR1 && ksig->sig != SIGUSR2)
-        printk("signal %d\n", ksig->sig);
 
 	/*
         Give up the cpu lock while we invoke the signal (David made me do it :))
