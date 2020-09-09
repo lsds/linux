@@ -43,12 +43,16 @@ static void initialize_uctx(struct ucontext *uctx, const struct pt_regs *regs)
 static void handle_signal(struct ksignal *ksig, struct ucontext *uctx)
 {
     lkl_thread_t self;
+
     /*
         The cpu lock must have been taken before we get here
     */
-    int owned_by_self = lkl_check_cpu_owner(__func__);
-    if (!owned_by_self)
-        lkl_bug("%s expected the cpu to be locked\n", __func__);
+   
+#ifdef DEBUG
+    int haveLock = lkl_check_cpu_owner();
+    if (haveLock == 0)
+        lkl_bug("%s called without cpu lock\n", __funct__);
+#endif
 
     if (VERBOSE && ksig->sig != SIGUSR1 && ksig->sig != SIGUSR2)
         printk("signal %d\n", ksig->sig);
@@ -59,10 +63,12 @@ static void handle_signal(struct ksignal *ksig, struct ucontext *uctx)
     
     lkl_cpu_put();
 
+#ifdef DEBUG
     /* In case it was recursively locked */
     owned_by_self = lkl_check_cpu_owner(__func__);
     if (owned_by_self)
         lkl_bug("%s expected the cpu to be unlocked or locked by another thread\n", __func__);
+#endif
 
     /* Get the current thread before we invoke */
     self = lkl_ops->thread_self();
@@ -74,10 +80,11 @@ static void handle_signal(struct ksignal *ksig, struct ucontext *uctx)
         Should not happen.
     */
 
+#ifdef DEBUG
 	if (!lkl_ops->thread_equal(self, lkl_ops->thread_self())) {
         lkl_bug("confused about identity sig %u\n", ksig->sig);
     }
-
+#endif
     /* take back the lock */
 	lkl_cpu_get();
 }
@@ -153,8 +160,6 @@ int get_next_ksignal(struct thread_info *task, struct ksignal* sig)
 
 
 /*
-    While you might think this should call move_signals_to_task, send_current_signals
-    it is different here in that only a specific signal is being requested.
     This is the sync signal case and that signal will have just been forced into the
     regular task queue of signals so the pre-existing code will work. See lkl_do_trap
 
@@ -169,32 +174,35 @@ void lkl_process_trap(int signr, struct ucontext *uctx)
 {
     struct ksignal ksig;
 
-    int ok = lkl_check_cpu_owner(__func__);
-    if (!ok)
-        lkl_bug("%s expected the cpu to be locked\n", __func__);
+#ifdef DEBUG
+    int haveLock = lkl_check_cpu_owner();
+    if (haveLock == 0)
+        lkl_bug("%s called without cpu lock\n", __funct__);
+#endif
 
     LKL_TRACE("enter\n");
-#if 1
-    move_signals_to_task(); // capture and queue pending signals and traps        
-    
-    // walk the list and find the first one of the type we expect
-    while (get_given_ksignal(task_thread_info(current), &ksig, signr)) {
-#else
-    while (get_signal(&ksig)) { // will through away other pending signals
-#endif
-        LKL_TRACE("ksig.sig=%d", ksig.sig);
 
+    /*
+        Capture and queue pending signals and traps.
+        Expect at least the one 'signr'.
+    */
+
+    move_signals_to_task();
+    
+    /*
+        Walk that queue and find the first one of the type we expect.
+        Note, no expectation that a trap will happen in order wrt to any
+        async signal already queued.
+    */
+
+    while (get_given_ksignal(task_thread_info(current), &ksig, signr)) {
         /* Handle required signal */
-        if(signr == ksig.sig)
+        if (signr == ksig.sig)
         {
             LKL_TRACE("trap task %p %d\n", current, signr);
-            printk("trap task %p %d\n", current, signr);
             handle_signal(&ksig, uctx);
             break;
-        } else {
-            printk("discarded ksig.sig=%d", ksig.sig);
         }
-        
     }
 }
 
@@ -218,7 +226,7 @@ void append_ksignal_node(struct thread_info *task, struct ksignal_list_node* nod
     spin_unlock(&task->signal_list_lock);
 }    
 
-// needs to be called with the cpu lock held
+// Must be called with the cpu lock held
 void move_signals_to_task(void)
 {
     struct ksignal ksig;    // place to hold retrieved signal
@@ -226,9 +234,13 @@ void move_signals_to_task(void)
     // in a list hanging off it.
     struct thread_info *current_task;
 
-    /* Lock the cpu while we rely on the task structures */
-    lkl_cpu_get();
+#ifdef DEBUG
+    int haveLock = lkl_check_cpu_owner();
+    if (haveLock == 0)
+        lkl_bug("%s called without cpu lock\n", __funct__);
+#endif
     current_task = task_thread_info(current); 
+    // note that get_signal may never return if the task is dead (eg pending a SIGKILL)
     while (get_signal(&ksig)) {
     	struct ksignal_list_node* node = kmalloc(sizeof(struct ksignal_list_node), GFP_KERNEL); // may sleep, is that ok?       
         if (node == NULL) {
@@ -239,11 +251,7 @@ void move_signals_to_task(void)
         node->next = NULL;
         append_ksignal_node(current_task, node);
     }
-    /* give back the cpu */
-    lkl_cpu_put();
 }
-
-
 
 /*
     Must be called WITH the cpu lock held.
@@ -254,46 +262,29 @@ void send_current_signals(struct ucontext *uctx)
 {
     struct ksignal ksig;
     struct ucontext uc;
-    int sent_count = 0;
     
+    LKL_TRACE("enter\n");
+
     if (uctx == NULL) {
         uctx = &uc;
         memset(uctx, 0, sizeof(uc));
         initialize_uctx(uctx, NULL);
     }
 
-    LKL_TRACE("enter\n");
-    
-    if (VERBOSE)
-        lkl_print_cpu_state("send_current_signals start");
+#ifdef DEBUG
+    int haveLock = lkl_check_cpu_owner();
+    if (haveLock == 0)
+        lkl_bug("%s called without cpu lock\n", __funct__);
+#endif
 
+    /* get pending signals */
     while (get_next_ksignal(task_thread_info(current), &ksig)) {
         LKL_TRACE("ksig.sig=%d", ksig.sig);
         
-        /* Note to PR reviewers. This commit is essentially a backup and has a lot
-           of debug code, as below, which knits with my tests */
-
-        if (VERBOSE && ksig.sig != SIGUSR1 && ksig.sig != SIGUSR2)
-            printk("sending %d\n", ksig.sig);
-
-        if (VERBOSE && ksig.sig != SIGUSR1 && ksig.sig != SIGUSR2)
-            lkl_print_cpu_state("send_current_signals before");
-        
         /*
             Actually deliver the signal.
-            Note that this might long jump away or otherwise never come back.
         */
 
         handle_signal(&ksig, uctx); 
-
-        if (VERBOSE && ksig.sig != SIGUSR1 && ksig.sig != SIGUSR2)
-            lkl_print_cpu_state("send_current_signals after");
-
-        sent_count++;
     }
-
-    if (VERBOSE && sent_count == 0)
-        lkl_print_cpu_state("send_current_signals end none");
-    if (VERBOSE && sent_count != 0)
-        lkl_print_cpu_state("send_current_signals end some");
 }
