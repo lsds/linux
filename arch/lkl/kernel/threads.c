@@ -137,12 +137,14 @@ void free_thread_stack(struct task_struct *tsk)
 	/* free any linked list of pending signals */
 	/* note that we do not need to take the lock as the thread is dead and ought to be unreachable*/
 
+    spin_lock(&ti->signal_list_lock);
 	struct ksignal_list_node* signal_list = ti->signal_list_head;
 	while (signal_list != NULL) {
 		struct ksignal_list_node *next = signal_list->next;
 		kfree(signal_list);
 		signal_list = next;
 	}
+    spin_unlock(&ti->signal_list_lock);
 
 	LKL_TRACE("Deallocating %p\n", ti);
 	kfree(ti);
