@@ -5,10 +5,18 @@ int lkl_cpu_get(void);
 void lkl_cpu_put(void);
 
 #ifdef DEBUG
-/* returns 1 if you have the cpu lock. */
-int lkl_check_cpu_owner();
-void lkl_print_cpu_state(const char *func_name);
+/* Bug if you do not have the cpu lock. */
+void lkl_assert_cpu_owner(void);
+/* Bug if you do have the cpu lock. */
+void lkl_assert_cpu_not_owner(void);
+/* Prints values of the various locking structure to aid debugging. */
+void lkl_print_cpu_lock_state(const char *func_name);
+#else
+static inline void lkl_assert_cpu_owner(void) {}
+static inline void lkl_assert_cpu_not_owner(void) {}
+static inline void lkl_print_cpu_lock_state(const char *func_name) {}
 #endif
+
 
 int lkl_cpu_try_run_irq(int irq);
 int lkl_cpu_init(void);

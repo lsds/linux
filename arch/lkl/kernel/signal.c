@@ -31,39 +31,32 @@ static void initialize_uctx(struct ucontext *uctx, const struct pt_regs *regs)
     return;
 }
 
-/* Function to invoke the signal handler of LKL application. This works for 
+/* 
+ * Function to invoke the signal handler of LKL application. This works for 
  * sig handler installed using sigaction or signal API. This will remove the
  * overhead of injecting the stack frame to pass the user context to user
  * space application (could lead to inclusion of ARCH specific code)
+ * 
+ * MUST be called owning the lock.
  */
-
-/* MUST be called owning the lock */
 static void handle_signal(struct ksignal *ksig, struct ucontext *uctx)
 {
     lkl_thread_t self;
 
-    /*
-        The cpu lock must have been taken before we get here
-    */
+    /* The cpu lock must have been taken before we get here */
    
-#ifdef DEBUG
-    int haveLock = lkl_check_cpu_owner();
-    if (haveLock == 0)
-        lkl_bug("%s called without cpu lock\n", __funct__);
-#endif
+    /* In DEBUG build check that the lock is currently held by this task */
+    lkl_assert_cpu_owner();
 
 	/*
-        Give up the cpu lock while we invoke the signal (David made me do it :))
-    */
-    
+	 *  Give up the cpu lock while we invoke the signal handler because we are returning
+     *  to userspace.
+	 */
+
     lkl_cpu_put();
 
-#ifdef DEBUG
     /* In case it was recursively locked */
-    owned_by_self = lkl_check_cpu_owner(__func__);
-    if (owned_by_self)
-        lkl_bug("%s expected the cpu to be unlocked or locked by another thread\n", __func__);
-#endif
+    lkl_assert_cpu_not_owner();
 
     /* Get the current thread before we invoke */
     self = lkl_ops->thread_self();
@@ -71,23 +64,20 @@ static void handle_signal(struct ksignal *ksig, struct ucontext *uctx)
     ksig->ka.sa.sa_handler(ksig->sig, (void*)&ksig->info, (void*)uctx);
 
     /* 
-        Check if the apparent current thread changes while processing the signal.
-        Should not happen.
-    */
+     *  Check if the apparent current thread changes while processing the signal.
+     *  Should not happen.
+     */
 
-#ifdef DEBUG
-	if (!lkl_ops->thread_equal(self, lkl_ops->thread_self())) {
-        lkl_bug("confused about identity sig %u\n", ksig->sig);
-    }
-#endif
+	BUG_ON(!lkl_ops->thread_equal(self, lkl_ops->thread_self()));
+
     /* take back the lock */
 	lkl_cpu_get();
 }
-/*
-    return only the signal of a given number, while snipping it from the list
-    Used by the trap handler for sync signals such as SEGV, FPE.
-*/
 
+/*
+ *  Return only the signal of a given number, while snipping it from the list
+ *  Used by the trap handler for sync signals such as SEGV, FPE.
+ */
 int get_given_ksignal(struct thread_info *task, struct ksignal* sig, int which)
 {
     struct ksignal_list_node *next;
@@ -154,13 +144,13 @@ int get_next_ksignal(struct thread_info *task, struct ksignal* sig)
 
 
 /*
-    This is the sync signal case and that signal will have just been forced into the
-    regular task queue of signals so the pre-existing code will work. See lkl_do_trap
-
-    Up for debate though is whether it would be better to either directly invoke
-    the handler in lkl_do_trap or here to have versions of move_signals_to_task, send_current_signals
-    that operate by scanning the list for signr, the given signal.
-*/
+ *  This is the sync signal case and that signal will have just been forced into the
+ *  regular task queue of signals so the pre-existing code will work. See lkl_do_trap
+ *
+ *  Up for debate though is whether it would be better to either directly invoke
+ *  the handler in lkl_do_trap or here to have versions of move_signals_to_task, send_current_signals
+ *  that operate by scanning the list for signr, the given signal.
+ */
 
 /* This is always called while owning the cpu */
 
@@ -168,26 +158,23 @@ void lkl_process_trap(int signr, struct ucontext *uctx)
 {
     struct ksignal ksig;
 
-#ifdef DEBUG
-    int haveLock = lkl_check_cpu_owner();
-    if (haveLock == 0)
-        lkl_bug("%s called without cpu lock\n", __funct__);
-#endif
+    /* In DEBUG build check that the lock is currently held by this task */
+    lkl_assert_cpu_owner();
 
     LKL_TRACE("enter\n");
 
     /*
-        Capture and queue pending signals and traps.
-        Expect at least the one 'signr'.
-    */
+     *  Capture and queue pending signals and traps.
+     *  Expect at least the one 'signr'.
+     */
 
     move_signals_to_task();
     
     /*
-        Walk that queue and find the first one of the type we expect.
-        Note, no expectation that a trap will happen in order wrt to any
-        async signal already queued.
-    */
+     *  Walk that queue and find the first one of the type we expect.
+     *  Note, no expectation that a trap will happen in order wrt to any
+     *  async signal already queued.
+     */
 
     while (get_given_ksignal(task_thread_info(current), &ksig, signr)) {
         /* Handle required signal */
@@ -201,9 +188,9 @@ void lkl_process_trap(int signr, struct ucontext *uctx)
 }
 
 /*
-   Get the end of the list and make it point at the new node,
-   if there were no nodes before then bot head and tail point at this one node
-*/
+ * Get the end of the list and make it point at the new node,
+ * if there were no nodes before then bot head and tail point at this one node
+ */
 
 void append_ksignal_node(struct thread_info *task, struct ksignal *ksig)
 {
@@ -231,36 +218,41 @@ void append_ksignal_node(struct thread_info *task, struct ksignal *ksig)
 }    
 
 /*
-    Must be called with the cpu lock held
-*/
+ * Must be called with the cpu lock held
+ */
 
 void move_signals_to_task(void)
 {
     struct ksignal ksig;    /* place to hold retrieved signal */
     /*
-        get the lkl local version of the current task, so we can store the signals
-        in a list hanging off it.
-    */
+     * Get the lkl local version of the current task, so we can store the signals
+     * in a list hanging off it.
+     */
     struct thread_info *current_task;
 
-#ifdef DEBUG
-    int haveLock = lkl_check_cpu_owner();
-    if (haveLock == 0)
-        lkl_bug("%s called without cpu lock\n", __funct__);
-#endif
+    /* In DEBUG build check that the lock is currently held by this task */
+    lkl_assert_cpu_owner();
+
     current_task = task_thread_info(current); 
     /* note that get_signal may never return if the task is dead (eg pending a SIGKILL) */
-    while (get_signal(&ksig)) {
-    	
+    while (get_signal(&ksig)) {	
         LKL_TRACE("Appending task %p signal %d\n", current, ksig.sig);
         append_ksignal_node(current_task, &ksig);
+
+/* 
+ * TODO check whether the task is runnable here. If it is INTERUPTABLE then set it to RUNNING
+ * so it can be scheduled. Check with the ltp test tgkill01.
+ * 
+ * This will be another PR.
+ */
+
     }
 }
 
 /*
-    Must be called WITH the cpu lock held.
-    The signal invoke code drops and retakes the lock.
-*/
+ * Must be called WITH the cpu lock held.
+ * The signal invoke code drops and retakes the lock.
+ */
 
 void send_current_signals(struct ucontext *uctx)
 {
@@ -275,19 +267,14 @@ void send_current_signals(struct ucontext *uctx)
         initialize_uctx(uctx, NULL);
     }
 
-#ifdef DEBUG
-    int haveLock = lkl_check_cpu_owner();
-    if (haveLock == 0)
-        lkl_bug("%s called without cpu lock\n", __funct__);
-#endif
+    /* In DEBUG build check that the lock is currently held by this task */
+    lkl_assert_cpu_owner();
 
     /* get pending signals */
     while (get_next_ksignal(task_thread_info(current), &ksig)) {
         LKL_TRACE("ksig.sig=%d", ksig.sig);
         
-        /*
-            Actually deliver the signal.
-        */
+        /* Actually deliver the signal. */
 
         handle_signal(&ksig, uctx); 
     }

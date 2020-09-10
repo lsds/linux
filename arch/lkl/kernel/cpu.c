@@ -88,9 +88,7 @@ void lkl_cpu_change_owner(lkl_thread_t owner)
 {
 	lkl_ops->mutex_lock(cpu.lock);
 	if (cpu.count > 1) {
-#ifdef DEBUG
-		lkl_print_cpu_state(__func__);
-#endif
+		lkl_print_cpu_lock_state(__func__);
 		lkl_bug("bad count while changing owner\n");
 	}
 	cpu.owner = owner;
@@ -129,9 +127,7 @@ void lkl_cpu_put(void)
 	if (cpu.shutdown_gate < MAX_THREADS) {
 		if (!cpu.count || !cpu.owner ||
 			!lkl_ops->thread_equal(cpu.owner, lkl_ops->thread_self())) {
-#ifdef DEBUG
-			lkl_print_cpu_state(__func__);
-#endif
+			lkl_print_cpu_lock_state(__func__);
 			lkl_bug("%s: unbalanced put\n", __func__);
 		}
 
@@ -145,9 +141,7 @@ void lkl_cpu_put(void)
 		if (test_ti_thread_flag(current_thread_info(), TIF_HOST_THREAD) &&
 			!single_task_running() && cpu.count == 1) {
 			if (in_interrupt()) {
-#ifdef DEBUG
-				lkl_print_cpu_state(__func__);
-#endif
+				lkl_print_cpu_lock_state(__func__);
 				lkl_bug("%s: in interrupt\n", __func__);
 			}
 			lkl_ops->mutex_unlock(cpu.lock);
@@ -166,13 +160,11 @@ void lkl_cpu_put(void)
 
 		cpu.owner = 0;
 	/*
-		Advice is that you should not attempt to use the locking mechanism
-		once the shutdown in underway, so lkl_bug in that case.
-	*/
+	 *	Advice is that you should not attempt to use the locking mechanism
+	 *	once the shutdown in underway, so lkl_bug in that case.
+	 */
 	} else {
-#ifdef DEBUG
-		lkl_print_cpu_state(__func__);
-#endif
+		lkl_print_cpu_lock_state(__func__);
 		lkl_bug("using lkl_cpu_put after shutdown");
 	}
 
@@ -181,16 +173,18 @@ void lkl_cpu_put(void)
 
 #ifdef DEBUG
 
-/* Probably only ever to be a debug tool. Essentially allows for assert(cpuLockTaken); */
+/*
+ *	Debug tool. Essentially allows for assert(cpuLockTaken);
+ */
 
-int lkl_check_cpu_owner()
+static int lkl_check_cpu_owner()
 {
 	int result;
 	lkl_ops->mutex_lock(cpu.lock);
 	lkl_thread_t self = lkl_ops->thread_self();
 	lkl_thread_t owner = cpu.owner;
 	if (!cpu.count || !owner ||
-	    !lkl_ops->thread_equal(owner, self)) {
+		!lkl_ops->thread_equal(owner, self)) {
 		result = 0;
 	} else {
 		result = 1;
@@ -199,9 +193,20 @@ int lkl_check_cpu_owner()
 	return result.
 }
 
-/* debugging */
+/* Expected the cpu to be locked by this task. */
+void lkl_assert_cpu_owner(void)
+{
+	BUG_ON(lkl_check_cpu_owner() != 1);
+}
 
-void lkl_print_cpu_state(const char *func_name)
+/* Expected the cpu to be unlocked or locked by another task. */
+void lkl_assert_cpu_not_owner(void)
+{
+	BUG_ON(lkl_check_cpu_owner() != 0);
+}
+
+/* Debugging, print state of flags etc for a particular caller. */
+void lkl_print_cpu_lock_state(const char *func_name)
 {	
 	lkl_thread_t self = lkl_ops->thread_self();
 	lkl_thread_t owner = cpu.owner;
@@ -209,7 +214,7 @@ void lkl_print_cpu_state(const char *func_name)
 	unsigned int sleepers = cpu.sleepers;
 	unsigned int shutdown_gate = cpu.shutdown_gate;
 
-	printk("%s: self %lx owner %lx count %u sleepers %u shutdown gate %u\n", func_name, self, owner, count, sleepers, shutdown_gate);
+	LKL_TRACE("%s: self %lx owner %lx count %u sleepers %u shutdown gate %u\n", func_name, self, owner, count, sleepers, shutdown_gate);
 }
 #endif
 	
