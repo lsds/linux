@@ -11,6 +11,11 @@
 #include <linux/signal_types.h>
 #include <linux/spinlock_types.h>
 
+/*
+ * Used to track a thread's prending signals.
+ * See signal_list_head/tail below.
+ */
+
 struct ksignal_list_node
 {
 	struct ksignal sig;
