@@ -39,7 +39,6 @@ struct lkl_cpu {
 	 * requesting CPU access.
 	 */
 	#define MAX_THREADS 1000000
-	/* This field seems to be both a count AND a flag which is indicated by adding MAX_THREADS in a convoluted way */
 	unsigned int shutdown_gate;
 	bool irqs_pending;
 	/* no of threads waiting the CPU */
@@ -119,54 +118,40 @@ void lkl_cpu_put(void)
 {
 	lkl_ops->mutex_lock(cpu.lock);
 
-	/*
-		lkl_cpu_get is a nop when the 'shutdown gate' is set
-		so, experimentally, do nothing in that case.
-	*/
-
-	if (cpu.shutdown_gate < MAX_THREADS) {
-		if (!cpu.count || !cpu.owner ||
-			!lkl_ops->thread_equal(cpu.owner, lkl_ops->thread_self())) {
-			lkl_print_cpu_lock_state(__func__);
-			lkl_bug("%s: unbalanced put\n", __func__);
-		}
-
-		while (cpu.irqs_pending && !irqs_disabled()) {
-			cpu.irqs_pending = false;
-			lkl_ops->mutex_unlock(cpu.lock);
-			run_irqs();
-			lkl_ops->mutex_lock(cpu.lock);
-		}
-
-		if (test_ti_thread_flag(current_thread_info(), TIF_HOST_THREAD) &&
-			!single_task_running() && cpu.count == 1) {
-			if (in_interrupt()) {
-				lkl_print_cpu_lock_state(__func__);
-				lkl_bug("%s: in interrupt\n", __func__);
-			}
-			lkl_ops->mutex_unlock(cpu.lock);
-			thread_sched_jb();
-			return;
-		}
-
-		if (--cpu.count > 0) {
-			lkl_ops->mutex_unlock(cpu.lock);
-			return;
-		}
-
-		if (cpu.sleepers) {
-			lkl_ops->sem_up(cpu.sem);
-		}
-
-		cpu.owner = 0;
-	/*
-	 *	Advice is that you should not attempt to use the locking mechanism
-	 *	once the shutdown in underway, so lkl_bug in that case.
-	 */
-	} else {
+	if (!cpu.count || !cpu.owner ||
+		!lkl_ops->thread_equal(cpu.owner, lkl_ops->thread_self())) {
 		lkl_print_cpu_lock_state(__func__);
-		lkl_bug("using lkl_cpu_put after shutdown");
+		lkl_bug("%s: unbalanced put\n", __func__);
 	}
+
+	while (cpu.irqs_pending && !irqs_disabled()) {
+		cpu.irqs_pending = false;
+		lkl_ops->mutex_unlock(cpu.lock);
+		run_irqs();
+		lkl_ops->mutex_lock(cpu.lock);
+	}
+
+	if (test_ti_thread_flag(current_thread_info(), TIF_HOST_THREAD) &&
+		!single_task_running() && cpu.count == 1) {
+		if (in_interrupt()) {
+			lkl_print_cpu_lock_state(__func__);
+			lkl_bug("%s: in interrupt\n", __func__);
+		}
+		lkl_ops->mutex_unlock(cpu.lock);
+		thread_sched_jb();
+		return;
+	}
+
+	if (--cpu.count > 0) {
+		lkl_ops->mutex_unlock(cpu.lock);
+		return;
+	}
+
+	if (cpu.sleepers) {
+		lkl_ops->sem_up(cpu.sem);
+	}
+
+	cpu.owner = 0;
 
 	lkl_ops->mutex_unlock(cpu.lock);
 }

@@ -136,9 +136,12 @@ int lkl_is_running(void)
 
 void machine_halt(void)
 {
-	/* all this does is set cpu.shutdown_gate to MAX_THREADS as some sort of flag */
+	/* 
+	 * All lkl_cpu_shutdown does is set cpu.shutdown_gate to MAX_THREADS
+	 * as a flag. It does return and so machine_halt will return too.
+	 */
+	
 	lkl_cpu_shutdown();
-	/* so this return path IS taken */ 
 }
 
 void machine_power_off(void)

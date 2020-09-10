@@ -43,8 +43,6 @@ static void handle_signal(struct ksignal *ksig, struct ucontext *uctx)
 {
     lkl_thread_t self;
 
-    /* The cpu lock must have been taken before we get here */
-   
     /* In DEBUG build check that the lock is currently held by this task */
     lkl_assert_cpu_owner();
 
