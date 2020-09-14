@@ -56,7 +56,7 @@ static void handle_signal(struct ksignal *ksig, struct ucontext *uctx)
     /* In case it was recursively locked */
     lkl_assert_cpu_not_owner();
 
-    /* Get the current thread before we invoke */
+    /* Get the current thread before we invoke the signal handler */
     self = lkl_ops->thread_self();
 
     ksig->ka.sa.sa_handler(ksig->sig, (void*)&ksig->info, (void*)uctx);
