@@ -12,7 +12,7 @@
 #include <linux/spinlock_types.h>
 
 /*
- * Used to track a thread's prending signals.
+ * Used to track a thread's pending signals.
  * See signal_list_head/tail below.
  */
 
