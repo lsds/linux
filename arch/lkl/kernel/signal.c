@@ -75,6 +75,8 @@ static void handle_signal(struct ksignal *ksig, struct ucontext *uctx)
 /*
  *  Return only the signal of a given number, while snipping it from the list
  *  Used by the trap handler for sync signals such as SEGV, FPE.
+ * 
+ *  Returns 1 meaning a signal was found, 0 otherwise.
  */
 int get_given_ksignal(struct thread_info *task, struct ksignal* sig, int which)
 {
@@ -209,7 +211,8 @@ void append_ksignal_node(struct thread_info *task, struct ksignal *ksig)
         task->signal_list_head = node;
         task->signal_list_tail = node;
     } else { /* otherwise just the tail changes */
-        ptr->next = node; 
+        ptr->next = node;
+        task->signal_list_tail = node; 
     }
 
     spin_unlock(&task->signal_list_lock);

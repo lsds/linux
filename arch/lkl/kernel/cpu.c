@@ -160,6 +160,8 @@ void lkl_cpu_put(void)
 
 /*
  *	Debug tool. Essentially allows for assert(cpuLockTaken);
+ *
+ * 	Returns 1 meaning this thread owns the lock, 0 otherwise. 
  */
 
 static int lkl_check_cpu_owner()
