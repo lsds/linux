@@ -41,7 +41,10 @@ void lkl_do_trap(int trapnr, int signr, char *str, struct ucontext *uctx,
 
 	LKL_TRACE("injecting signal into lkl\n");
 	force_sig_info((struct kernel_siginfo *)info);
-	lkl_process_trap(signr, uctx);
 
+	/* invoke the signal handler for this trap once we have given up the CPU */
+	/* otherwise we may take the CPU lock again and fail. */
+	lkl_process_trap(signr, uctx);  
+	
 	lkl_cpu_put();
 }

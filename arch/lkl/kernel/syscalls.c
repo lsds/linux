@@ -165,7 +165,16 @@ long lkl_syscall(long no, long *params)
 
 		ret = run_syscall(no, params);
 		task_work_run();
-		do_signal(NULL);
+
+		/*
+		 * Do NOT send signals now. That mechanism relies on lkl_cpu_get/put
+		 * which is disabled for shutdown.
+		 * 
+		 * Otherwise it would be like:
+		 * 
+		 * move_signals_to_task();
+		 * send_current_signals(NULL);
+		 */
 
 		if (no == __NR_reboot) {
 			thread_sched_jb();
@@ -287,7 +296,8 @@ long lkl_syscall(long no, long *params)
 		switch_to_host_task(task);
 	}
 
-	do_signal(NULL);
+	/* capture the signals pending while we still have the cpu lock */
+	move_signals_to_task();
 
 	if (no == __NR_reboot) {
 		thread_sched_jb();
@@ -295,11 +305,12 @@ long lkl_syscall(long no, long *params)
 	}
 
 out:
+	/* run any signal handlers expected to run on this thread */
+	send_current_signals(NULL);
 	lkl_cpu_put();
-
+	
 	LKL_TRACE("done (no=%li task=%s current=%s ret=%i)\n", no,
 		  task ? task->comm : "NULL", current->comm, ret);
-
 	return ret;
 }
 
@@ -325,7 +336,22 @@ static int idle_host_task_loop(void *unused)
 	idle_host_task = current;
 
 	for (;;) {
+		/*
+			any pending signals, capture them in lists per task
+			so we can send them to the appropriate task later
+		*/
+		move_signals_to_task();
+
 		lkl_cpu_put();
+
+		/* 
+		 * This mirrors some of the logic in __switch_to that transfers ownership of the CPU lock between
+		 * threads when they are context switched. This is not quite the same code because in __switch_to it
+		 * transfers the lock to the next LKL thread, whereas this code is transferring owership implicitly
+		 * to whichever thread does a syscall again (or back to itself if the timer interrupt fires and
+		 * successfully acquires the CPU lock).
+		 */
+
 		lkl_ops->sem_down(ti->sched_sem);
 
 		if (lkl_shutdown) {
