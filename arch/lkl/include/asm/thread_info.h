@@ -8,6 +8,20 @@
 #include <asm/processor.h>
 #include <asm/host_ops.h>
 
+#include <linux/signal_types.h>
+#include <linux/spinlock_types.h>
+
+/*
+ * Used to track a thread's pending signals.
+ * See signal_list_head/tail below.
+ */
+
+struct ksignal_list_node
+{
+	struct ksignal sig;
+	struct ksignal_list_node *next;	/* consider using the kernel lists, but they are doubly linked and clumsy in this simple case */
+};
+
 typedef struct {
 	unsigned long seg;
 } mm_segment_t;
@@ -29,6 +43,12 @@ struct thread_info {
 	/* The task for any child that was created during syscall execution.  Only
 	 * valid on return from a clone-family syscall. */
 	struct task_struct *cloned_child;
+	
+	/* lock for the list below, the init is in the thread_info creation fn */
+ 	spinlock_t signal_list_lock;	
+ 	/* a linked list of pending signals, pushed onto here as they are detected in move_signals_to_task */
+ 	struct ksignal_list_node* signal_list_head;
+ 	struct ksignal_list_node* signal_list_tail;
 };
 
 #define INIT_THREAD_INFO(tsk)				\
